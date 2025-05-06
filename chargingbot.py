@@ -60,9 +60,15 @@ def checkin(ack, body, say):
     charging_state["current_user"] = user_id
     charging_state["start_time"] = time.time()
     say(f"<@{user_id}> started a 90-minute charging session.")
-    # Timer thread
+
     def charge_timer():
-        time.sleep(CHARGE_DURATION)
+        time.sleep(CHARGE_DURATION - 10 * 60)
+        if charging_state["current_user"] == user_id:
+            app.client.chat_postMessage(
+                channel=user_id,
+                text="⏳ 10 minutes left in your charging session."
+            )
+        time.sleep(10 * 60)
         if charging_state["current_user"] == user_id:
             app.client.chat_postMessage(
                 channel=user_id,
@@ -71,7 +77,9 @@ def checkin(ack, body, say):
             charging_state["current_user"] = None
             charging_state["start_time"] = None
             notify_next_user()
+
     threading.Thread(target=charge_timer).start()
+
 
 
 # Command: /request
@@ -92,7 +100,13 @@ def request(ack, body, say):
         say(f"🟢 Charging queue was empty. <@{user_id}>, you're now checked in. Connect your car to the charger.")
 
         def charge_timer():
-            time.sleep(CHARGE_DURATION)
+            time.sleep(CHARGE_DURATION - 10 * 60)
+            if charging_state["current_user"] == user_id:
+                app.client.chat_postMessage(
+                    channel=user_id,
+                    text="⏳ 10 minutes left in your charging session."
+                )
+            time.sleep(10 * 60)
             if charging_state["current_user"] == user_id:
                 app.client.chat_postMessage(
                     channel=user_id,
