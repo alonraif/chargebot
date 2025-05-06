@@ -54,9 +54,17 @@ def notify_next_user():
 def checkin(ack, body, say):
     ack()
     user_id = body["user_id"]
+
+    # Prevent duplicate check-ins by the same user
+    if charging_state["current_user"] == user_id:
+        say(f"<@{user_id}>, you're already in a charging session.")
+        return
+
     if charging_state["current_user"]:
         say(f"<@{user_id}>, someone is already charging. Use `/request` to join the queue.")
         return
+
+    # Start new charging session
     charging_state["current_user"] = user_id
     charging_state["start_time"] = time.time()
     say(f"<@{user_id}> started a 90-minute charging session.")
@@ -79,6 +87,7 @@ def checkin(ack, body, say):
             notify_next_user()
 
     threading.Thread(target=charge_timer).start()
+
 
 
 
