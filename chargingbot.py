@@ -1,5 +1,6 @@
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+from flask import Flask, jsonify
 import time
 import threading
 import os
@@ -197,14 +198,31 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ChargingBot is alive and running.")
 
-def start_dummy_server():
-    server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)
-    server.serve_forever()
+
+flask_app = Flask(__name__)
+
+@flask_app.route("/status")
+def status():
+    current = charging_state["current_user"]
+    queue = charging_state["queue"]
+    start_time = charging_state["start_time"]
+    now = time.time()
+    if current:
+        time_remaining = int((start_time + CHARGE_DURATION) - now)
+    else:
+        time_remaining = 0
+
+    return jsonify({
+        "current_user": current,
+        "queue": queue,
+        "time_remaining": time_remaining
+    })
+
+def run_flask():
+    flask_app.run(host="0.0.0.0", port=5000)
+
 
 if __name__ == "__main__":
-    # Start the dummy HTTP server in a background thread (for render.com web service instance)
-    threading.Thread(target=start_dummy_server, daemon=True).start()
-
     # Start the Slack bot using Socket Mode
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     handler.start()
