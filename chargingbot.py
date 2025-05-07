@@ -197,14 +197,8 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(b"ChargingBot is alive and running.")
 
-def start_dummy_server():
-    server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)
-    server.serve_forever()
 
 if __name__ == "__main__":
-    # Start the dummy HTTP server in a background thread (for render.com web service instance)
-    threading.Thread(target=start_dummy_server, daemon=True).start()
-
     # Start the Slack bot using Socket Mode
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     handler.start()
