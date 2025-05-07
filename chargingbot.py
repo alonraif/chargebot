@@ -202,7 +202,7 @@ def start_dummy_server():
     server.serve_forever()
 
 if __name__ == "__main__":
-    # Start the dummy HTTP server in a background thread
+    # Start the dummy HTTP server in a background thread (for render.com web service instance)
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
     # Start the Slack bot using Socket Mode
