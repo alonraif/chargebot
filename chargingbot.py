@@ -4,44 +4,51 @@ import time
 import threading
 import os
 import json
+from http.server import HTTPServer, BaseHTTPRequestHandler
 
-
+# Initialize the Slack app with bot token from environment variable
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
-state_lock = threading.Lock()  # Add this line near your charging_state declaration
+# Threading lock to protect state from concurrent access
+state_lock = threading.Lock()
 
-# Data structures
+# Shared bot state
 charging_state = {
-    "current_user": None,
-    "start_time": None,
-    "queue": [],
-    "grace_timer": None
+    "current_user": None,       # Slack user ID currently charging
+    "start_time": None,         # Start timestamp of current session
+    "queue": [],                # List of user IDs waiting
+    "grace_timer": None         # Timer for grace period (currently unused)
 }
 
+# Configuration constants
 CHARGE_DURATION = 90 * 60  # 90 minutes in seconds
 GRACE_PERIOD = 5 * 60      # 5 minutes in seconds
 
+# ------------------------
+# Utility Functions
+# ------------------------
 
-# Utility: Format time remaining
 def format_time_remaining(seconds):
+    """Returns a nicely formatted time string (MM:SS) or 'Now' if expired."""
     if seconds <= 0:
         return "Now"
     mins = seconds // 60
     secs = seconds % 60
     return f"{int(mins):02}:{int(secs):02} remaining"
 
-
-# Utility: Notify next user
 def notify_next_user():
+    """Sends a notification to the next user in the queue and starts the grace period."""
     if charging_state["queue"]:
         next_user = charging_state["queue"].pop(0)
         charging_state["current_user"] = next_user
         charging_state["start_time"] = time.time() + GRACE_PERIOD
+
+        # Inform user about grace period
         app.client.chat_postMessage(
             channel=next_user,
             text="🔌 The charger is now available. Please plug in within 5 minutes."
         )
-        # Wait 5 minutes before starting timer
+
         def delayed_start():
             time.sleep(GRACE_PERIOD)
             app.client.chat_postMessage(
@@ -50,14 +57,16 @@ def notify_next_user():
             )
         threading.Thread(target=delayed_start).start()
 
+# ------------------------
+# Slack Commands
+# ------------------------
 
-# Command: /checkin
 @app.command("/checkin")
 def checkin(ack, body, say):
+    """Starts a charging session if no one is currently charging."""
     ack()
     user_id = body["user_id"]
 
-    # Prevent duplicate check-ins by the same user
     if charging_state["current_user"] == user_id:
         say(f"<@{user_id}>, you're already in a charging session.")
         return
@@ -66,7 +75,7 @@ def checkin(ack, body, say):
         say(f"<@{user_id}>, someone is already charging. Use `/request` to join the queue.")
         return
 
-    # Start new charging session
+    # Start session
     charging_state["current_user"] = user_id
     charging_state["start_time"] = time.time()
     say(f"<@{user_id}> started a 90-minute charging session.")
@@ -74,37 +83,26 @@ def checkin(ack, body, say):
     def charge_timer():
         time.sleep(CHARGE_DURATION - 10 * 60)
         if charging_state["current_user"] == user_id:
-            app.client.chat_postMessage(
-                channel=user_id,
-                text="⏳ 10 minutes left in your charging session."
-            )
+            app.client.chat_postMessage(channel=user_id, text="⏳ 10 minutes left in your charging session.")
         time.sleep(10 * 60)
         if charging_state["current_user"] == user_id:
-            app.client.chat_postMessage(
-                channel=user_id,
-                text="⚠️ Your charging session has ended. Please disconnect your car."
-            )
+            app.client.chat_postMessage(channel=user_id, text="⚠️ Your charging session has ended. Please disconnect your car.")
             charging_state["current_user"] = None
             charging_state["start_time"] = None
             notify_next_user()
 
     threading.Thread(target=charge_timer).start()
 
-
-
-
-# Command: /request
 @app.command("/request")
 def request(ack, body, say):
+    """Adds the user to the queue, or starts charging if charger is free."""
     ack()
     user_id = body["user_id"]
 
-    # If user is already charging
     if user_id == charging_state["current_user"]:
         say(f"<@{user_id}>, you're already charging.")
         return
 
-    # If no one is charging, allow the user to start immediately
     if charging_state["current_user"] is None:
         charging_state["current_user"] = user_id
         charging_state["start_time"] = time.time()
@@ -113,16 +111,10 @@ def request(ack, body, say):
         def charge_timer():
             time.sleep(CHARGE_DURATION - 10 * 60)
             if charging_state["current_user"] == user_id:
-                app.client.chat_postMessage(
-                    channel=user_id,
-                    text="⏳ 10 minutes left in your charging session."
-                )
+                app.client.chat_postMessage(channel=user_id, text="⏳ 10 minutes left in your charging session.")
             time.sleep(10 * 60)
             if charging_state["current_user"] == user_id:
-                app.client.chat_postMessage(
-                    channel=user_id,
-                    text="⚠️ Your charging session has ended. Please disconnect your car."
-                )
+                app.client.chat_postMessage(channel=user_id, text="⚠️ Your charging session has ended. Please disconnect your car.")
                 charging_state["current_user"] = None
                 charging_state["start_time"] = None
                 notify_next_user()
@@ -130,21 +122,17 @@ def request(ack, body, say):
         threading.Thread(target=charge_timer).start()
         return
 
-    # If already in queue
     if user_id in charging_state["queue"]:
         say(f"<@{user_id}>, you are already in the queue.")
         return
 
-    # Add to queue
     charging_state["queue"].append(user_id)
     position = len(charging_state["queue"])
     say(f"<@{user_id}> added to the charging queue at position {position}.")
 
-
-
-# Command: /endcharge
 @app.command("/endcharge")
 def endcharge(ack, body, say):
+    """Ends the current user's charging session early."""
     ack()
     user_id = body["user_id"]
     if charging_state["current_user"] != user_id:
@@ -155,10 +143,9 @@ def endcharge(ack, body, say):
     charging_state["start_time"] = None
     notify_next_user()
 
-
-# Command: /exitqueue
 @app.command("/exitqueue")
 def exitqueue(ack, body, say):
+    """Removes the user from the queue."""
     ack()
     user_id = body["user_id"]
     if user_id in charging_state["queue"]:
@@ -167,10 +154,9 @@ def exitqueue(ack, body, say):
     else:
         say(f"<@{user_id}>, you're not in the queue.")
 
-
-# ✅ Updated command: /chargestatus
 @app.command("/chargestatus")
 def chargestatus(ack, body, say):
+    """Displays the current charger and queue status."""
     ack()
     current = charging_state["current_user"]
     start_time = charging_state["start_time"]
@@ -189,11 +175,9 @@ def chargestatus(ack, body, say):
 
     say(msg)
 
-# Start Socket Mode handler
-
-from http.server import HTTPServer, BaseHTTPRequestHandler
-
-
+# ------------------------
+# HTTP Server for Health/Status Pages
+# ------------------------
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -210,18 +194,16 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                 user_ids = [charging_state["current_user"]] if charging_state["current_user"] else []
                 user_ids += charging_state["queue"]
 
-            # Fetch Slack display names from user IDs
             user_map = {}
             for uid in user_ids:
                 try:
                     user_info = app.client.users_info(user=uid)
                     profile = user_info["user"]["profile"]
-                    # Use display_name if set, otherwise real_name, otherwise Slack username
                     display_name = profile.get("display_name") or profile.get("real_name") or user_info["user"]["name"]
                     user_map[uid] = display_name
                 except Exception as e:
                     print(f"Failed to fetch name for {uid}: {e}")
-                    user_map[uid] = uid  # fallback to ID
+                    user_map[uid] = uid
 
             with state_lock:
                 state = {
@@ -241,18 +223,19 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             self.send_response(404)
             self.end_headers()
 
-
 def start_dummy_server():
+    """Starts the local HTTP server for health checks (useful for render.com)."""
     server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)
     server.serve_forever()
 
+# ------------------------
+# Main Execution
+# ------------------------
+
 if __name__ == "__main__":
-    # Start the dummy HTTP server in a background thread (for render.com web service instance)
+    # Run HTTP server in background
     threading.Thread(target=start_dummy_server, daemon=True).start()
 
-    # Start the Slack bot using Socket Mode
+    # Start Slack bot via Socket Mode
     handler = SocketModeHandler(app, os.environ["SLACK_APP_TOKEN"])
     handler.start()
-
-
-
