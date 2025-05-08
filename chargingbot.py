@@ -3,10 +3,12 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 import time
 import threading
 import os
+import json
 
 
 app = App(token=os.environ["SLACK_BOT_TOKEN"])
 
+state_lock = threading.Lock()  # Add this line near your charging_state declaration
 
 # Data structures
 charging_state = {
@@ -191,11 +193,50 @@ def chargestatus(ack, body, say):
 
 from http.server import HTTPServer, BaseHTTPRequestHandler
 
+
+
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"ChargingBot is alive and running.")
+        if self.path == "/":
+            self.send_response(200)
+            self.end_headers()
+            self.wfile.write(b"ChargingBot is alive and running.")
+        elif self.path == "/status":
+            self.send_response(200)
+            self.send_header("Content-type", "application/json")
+            self.end_headers()
+            with state_lock:
+                now = time.time()
+                user_ids = [charging_state["current_user"]] if charging_state["current_user"] else []
+                user_ids += charging_state["queue"]
+
+            # Fetch Slack display names from user IDs
+            user_map = {}
+            for uid in user_ids:
+                try:
+                    user_info = app.client.users_info(user=uid)
+                    user_map[uid] = user_info["user"]["profile"]["display_name"] or user_info["user"]["real_name"]
+                except Exception:
+                    user_map[uid] = uid  # fallback to ID
+
+            with state_lock:
+                state = {
+                    "current_user": user_map.get(charging_state["current_user"]),
+                    "start_time": charging_state["start_time"],
+                    "time_remaining": int((charging_state["start_time"] + CHARGE_DURATION - now)) if charging_state["start_time"] else None,
+                    "queue": [user_map.get(uid, uid) for uid in charging_state["queue"]],
+                }
+            self.wfile.write(json.dumps(state).encode())
+        elif self.path == "/dashboard":
+            self.send_response(200)
+            self.send_header("Content-type", "text/html")
+            self.end_headers()
+            with open("dashboard.html", "rb") as f:
+                self.wfile.write(f.read())
+        else:
+            self.send_response(404)
+            self.end_headers()
+
 
 def start_dummy_server():
     server = HTTPServer(("0.0.0.0", 8080), HealthCheckHandler)

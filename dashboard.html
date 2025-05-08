@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>ChargingBot Dashboard</title>
+  <style>
+    body { font-family: sans-serif; padding: 2em; }
+    .card { border: 1px solid #ccc; padding: 1em; margin-bottom: 1em; border-radius: 8px; }
+  </style>
+</head>
+<body>
+  <h1>🔌 ChargingBot Dashboard</h1>
+  <div class="card" id="charging-status">Loading...</div>
+  <div class="card" id="queue-status"></div>
+
+  <script>
+    async function fetchStatus() {
+      const res = await fetch("/status");
+      const data = await res.json();
+
+      const chargingDiv = document.getElementById("charging-status");
+      const queueDiv = document.getElementById("queue-status");
+
+      if (data.current_user) {
+        const remaining = data.time_remaining > 0 ? `${Math.floor(data.time_remaining/60)}m ${data.time_remaining%60}s remaining` : "Now";
+        chargingDiv.innerHTML = `<strong>Currently Charging:</strong> <code>@${data.current_user}</code><br><strong>Time Left:</strong> ${remaining}`;
+      } else {
+        chargingDiv.innerHTML = "🟢 No one is currently charging.";
+      }
+
+      if (data.queue.length > 0) {
+        queueDiv.innerHTML = "<strong>Queue:</strong><br>" + data.queue.map((u, i) => `${i + 1}. @${u}`).join("<br>");
+      } else {
+        queueDiv.innerHTML = "📭 No one in the queue.";
+      }
+    }
+
+    setInterval(fetchStatus, 10000);
+    fetchStatus();
+  </script>
+</body>
+</html>
