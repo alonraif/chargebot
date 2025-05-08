@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EV Charger Dashboard</title>
     <style>
-        /* CSS Variables for Theming */
+        /* CSS Variables for Theming (same as before) */
         :root {
             --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 
@@ -57,7 +57,7 @@
             --status-available-bg: var(--green-dark);
             --status-grace-bg: var(--orange-dark);
             --status-charging-bg: var(--accent-color-dark);
-            --status-text-color: #fff; /* Or #1c1e22 for better contrast on some dark shades */
+            --status-text-color: #fff;
             --error-bg: var(--red-dark);
             --border-color: var(--border-dark);
         }
@@ -90,10 +90,12 @@
             width: 100%;
             max-width: 600px;
             transition: background-color 0.3s;
-            animation: fadeIn 0.5s ease-out;
+            /* Initial fade-in for the whole container */
+            opacity: 0;
+            animation: containerFadeIn 0.7s ease-out forwards;
         }
 
-        @keyframes fadeIn {
+        @keyframes containerFadeIn { /* Renamed for clarity */
             from { opacity: 0; transform: translateY(20px); }
             to { opacity: 1; transform: translateY(0); }
         }
@@ -147,13 +149,20 @@
             border-radius: 10px;
             text-align: center;
             color: var(--status-text-color);
-            transition: background-color 0.3s ease;
+            transition: background-color 0.4s ease; /* Smoother bg transition */
         }
         .status-card.available { background-color: var(--status-available-bg); }
         .status-card.grace { background-color: var(--status-grace-bg); }
         .status-card.charging { background-color: var(--status-charging-bg); }
         .status-card.error { background-color: var(--error-bg); }
 
+        /* Elements within status card will have a subtle opacity transition if their content changes */
+        .status-card .status-icon,
+        .status-card .status-title,
+        .status-card .status-user,
+        .status-card .status-time {
+            transition: opacity 0.3s ease-in-out;
+        }
 
         .status-card .status-icon {
             font-size: 2.5rem;
@@ -181,9 +190,10 @@
 
         .queue-list {
             list-style: none;
+            transition: opacity 0.3s ease-in-out; /* Transition for the whole list if it appears/disappears */
         }
         .queue-list li {
-            background-color: var(--bg-color); /* Slightly different from card for depth */
+            background-color: var(--bg-color);
             padding: 12px 15px;
             border-radius: 8px;
             margin-bottom: 10px;
@@ -191,6 +201,8 @@
             font-size: 0.95rem;
             display: flex;
             align-items: center;
+            /* Individual list items can also have a subtle transition if needed */
+            /* transition: background-color 0.3s, border-color 0.3s; */
         }
         .queue-list li .position {
             font-weight: 600;
@@ -213,15 +225,6 @@
             text-align: center;
             font-size: 0.85rem;
             color: var(--text-secondary);
-        }
-
-        /* Utility for smooth transitions when data loads */
-        .fade-in-content {
-            opacity: 0;
-            animation: contentFadeIn 0.5s forwards;
-        }
-        @keyframes contentFadeIn {
-            to { opacity: 1; }
         }
     </style>
 </head>
@@ -272,18 +275,36 @@
         const queueListEl = document.getElementById('queueList');
         const lastUpdatedEl = document.getElementById('lastUpdated');
 
+        // Helper to update text content and manage a very brief opacity flicker if content changes
+        // This prevents jarring updates for rapidly changing numbers (like timers)
+        // but gives a subtle hint when static text changes.
+        function updateText(element, newText) {
+            if (element.innerHTML !== newText) { // Use innerHTML if you're passing HTML, textContent for plain text
+                element.style.opacity = '0.7'; // Briefly dim
+                element.innerHTML = newText;   // Update content
+                setTimeout(() => {
+                    element.style.opacity = '1'; // Restore full opacity
+                }, 50); // Short delay
+            }
+        }
+        // Simpler version for textContent if you are sure no HTML is passed
+        function updateTextContent(element, newText) {
+            if (element.textContent !== newText) {
+                element.style.opacity = '0.7';
+                element.textContent = newText;
+                setTimeout(() => {
+                    element.style.opacity = '1';
+                }, 50);
+            }
+        }
+
+
         function formatTime(seconds) {
             if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
             if (seconds === 0) return "Ending now";
             const mins = Math.floor(seconds / 60);
             const secs = seconds % 60;
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
-        }
-
-        function applyFadeIn(element) {
-            element.classList.remove('fade-in-content');
-            void element.offsetWidth; // Trigger reflow to restart animation
-            element.classList.add('fade-in-content');
         }
 
         async function updateDashboard() {
@@ -296,68 +317,80 @@
 
                 // --- Update Status Card ---
                 let userText = data.current_user_id ? `User: <${data.current_user_id}>` : "No active user";
+                let currentStatusClass = statusCardEl.className;
+                let newStatusClass = '';
 
                 if (data.current_user_id) {
                     if (data.is_in_grace_period && data.grace_period_ends_in_seconds !== null) {
-                        statusCardEl.className = 'status-card grace';
-                        statusIconEl.textContent = '⏳'; // Hourglass
-                        statusTitleEl.textContent = 'Grace Period';
-                        statusTimeEl.innerHTML = formatTime(data.grace_period_ends_in_seconds);
+                        newStatusClass = 'status-card grace';
+                        updateTextContent(statusIconEl, '⏳');
+                        updateTextContent(statusTitleEl, 'Grace Period');
+                        updateText(statusTimeEl, formatTime(data.grace_period_ends_in_seconds));
                     } else if (data.charge_session_remaining_seconds !== null) {
-                        statusCardEl.className = 'status-card charging';
-                        statusIconEl.textContent = '🔋'; // Battery
-                        statusTitleEl.textContent = 'Currently Charging';
-                        statusTimeEl.innerHTML = formatTime(data.charge_session_remaining_seconds);
-                    } else { // Should ideally not happen if user_id is set and no times are there
-                        statusCardEl.className = 'status-card'; // Neutral
-                        statusIconEl.textContent = '🤔';
-                        statusTitleEl.textContent = 'User Active - Status Unclear';
-                        statusTimeEl.innerHTML = 'N/A';
+                        newStatusClass = 'status-card charging';
+                        updateTextContent(statusIconEl, '🔋');
+                        updateTextContent(statusTitleEl, 'Currently Charging');
+                        updateText(statusTimeEl, formatTime(data.charge_session_remaining_seconds));
+                    } else {
+                        newStatusClass = 'status-card';
+                        updateTextContent(statusIconEl, '🤔');
+                        updateTextContent(statusTitleEl, 'User Active - Status Unclear');
+                        updateText(statusTimeEl, 'N/A');
                     }
-                } else { // Charger is available
-                    statusCardEl.className = 'status-card available';
-                    statusIconEl.textContent = '✅'; // Checkmark
-                    statusTitleEl.textContent = 'Charger Available';
+                } else {
+                    newStatusClass = 'status-card available';
+                    updateTextContent(statusIconEl, '✅');
+                    updateTextContent(statusTitleEl, 'Charger Available');
                     userText = "Ready for the next charge!";
-                    statusTimeEl.innerHTML = '';
+                    updateText(statusTimeEl, '');
                 }
-                statusUserEl.innerHTML = userText;
 
-                // Apply fade-in to children of status card if needed, or card itself
-                applyFadeIn(statusTitleEl);
-                applyFadeIn(statusUserEl);
-                applyFadeIn(statusTimeEl);
+                if (currentStatusClass !== newStatusClass) {
+                    statusCardEl.className = newStatusClass; // Update class only if it changes
+                }
+                updateText(statusUserEl, userText);
 
 
                 // --- Update Queue List ---
+                // To avoid full list re-render if not necessary, we could compare, but for simplicity:
                 if (data.queue && data.queue.length > 0) {
-                    queueListEl.innerHTML = data.queue.map((userId, index) => `
+                    const queueHTML = data.queue.map((userId, index) => `
                         <li>
                             <span class="position">${index + 1}.</span>
                             <span><${userId}></span>
                         </li>
                     `).join("");
+                    // Only update innerHTML if it has actually changed to prevent flicker
+                    if (queueListEl.innerHTML !== queueHTML) {
+                        queueListEl.innerHTML = queueHTML;
+                    }
                 } else {
-                    queueListEl.innerHTML = '<li class="empty-queue">Queue is empty</li>';
+                    const emptyQueueHTML = '<li class="empty-queue">Queue is empty</li>';
+                    if (queueListEl.innerHTML !== emptyQueueHTML) {
+                        queueListEl.innerHTML = emptyQueueHTML;
+                    }
                 }
-                applyFadeIn(queueListEl);
-
 
                 // --- Update Last Updated Time ---
+                // This will always change, so direct update is fine
                 lastUpdatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
 
             } catch (error) {
                 console.error('Failed to update dashboard:', error);
-                statusCardEl.className = 'status-card error';
-                statusIconEl.textContent = '⚠️';
-                statusTitleEl.textContent = 'Error Loading Status';
-                statusUserEl.innerHTML = 'Could not fetch data from the server.';
-                statusTimeEl.innerHTML = '';
-                queueListEl.innerHTML = '<li class="empty-queue">Could not load queue.</li>';
+                if (statusCardEl.className !== 'status-card error') {
+                     statusCardEl.className = 'status-card error';
+                }
+                updateTextContent(statusIconEl, '⚠️');
+                updateTextContent(statusTitleEl, 'Error Loading Status');
+                updateText(statusUserEl, 'Could not fetch data from the server.');
+                updateText(statusTimeEl, '');
+                if (queueListEl.innerHTML !== '<li class="empty-queue">Could not load queue.</li>') {
+                    queueListEl.innerHTML = '<li class="empty-queue">Could not load queue.</li>';
+                }
             }
         }
 
-        // --- Theme Management ---
+        // --- Theme Management (same as before) ---
         function setTheme(themeName) {
             localStorage.setItem('theme', themeName);
             document.documentElement.setAttribute('data-theme', themeName);
@@ -380,7 +413,7 @@
             } else if (prefersDark) {
                 setTheme('dark');
             } else {
-                setTheme('light'); // Default
+                setTheme('light');
             }
         }
 
@@ -388,8 +421,11 @@
 
         // --- Initial Load and Interval ---
         loadInitialTheme();
-        updateDashboard(); // Initial call
-        setInterval(updateDashboard, REFRESH_INTERVAL_MS);
+        // Wait for initial container fade-in to complete before first data load for smoother feel
+        setTimeout(() => {
+            updateDashboard();
+            setInterval(updateDashboard, REFRESH_INTERVAL_MS);
+        }, 700); // Matches containerFadeIn animation duration
 
     </script>
 </body>
