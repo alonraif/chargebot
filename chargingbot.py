@@ -215,8 +215,12 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
             for uid in user_ids:
                 try:
                     user_info = app.client.users_info(user=uid)
-                    user_map[uid] = user_info["user"]["profile"]["display_name"] or user_info["user"]["real_name"]
-                except Exception:
+                    profile = user_info["user"]["profile"]
+                    # Use display_name if set, otherwise real_name, otherwise Slack username
+                    display_name = profile.get("display_name") or profile.get("real_name") or user_info["user"]["name"]
+                    user_map[uid] = display_name
+                except Exception as e:
+                    print(f"Failed to fetch name for {uid}: {e}")
                     user_map[uid] = uid  # fallback to ID
 
             with state_lock:
