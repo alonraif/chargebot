@@ -1,314 +1,396 @@
 <!DOCTYPE html>
-<html lang="en" data-theme="light">
+<html lang="en">
 <head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>ChargingBot Dashboard</title>
-  <style>
-    :root {
-      --bg-light: #f9f9f9;
-      --bg-dark: #121212;
-      --card-light: #ffffff;
-      --card-dark: #1e1e1e;
-      --text-light: #222;
-      --text-dark: #eee;
-      --accent: #4CAF50; /* Green for available/charging */
-      --warning: #FFC107; /* Yellow for grace period */
-      --error: #e53935;   /* Red for errors */
-    }
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>EV Charger Dashboard</title>
+    <style>
+        /* CSS Variables for Theming */
+        :root {
+            --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
 
-    html[data-theme="light"] {
-      --bg: var(--bg-light);
-      --card: var(--card-light);
-      --text: var(--text-light);
-    }
+            --bg-light: #f4f7f9;
+            --card-bg-light: #ffffff;
+            --text-primary-light: #2c3e50;
+            --text-secondary-light: #7f8c8d;
+            --accent-color-light: #3498db;
+            --accent-hover-light: #2980b9;
+            --green-light: #2ecc71;
+            --orange-light: #e67e22;
+            --red-light: #e74c3c;
+            --border-light: #e0e0e0;
 
-    html[data-theme="dark"] {
-      --bg: var(--bg-dark);
-      --card: var(--card-dark);
-      --text: var(--text-dark);
-    }
+            --bg-dark: #1c1e22;
+            --card-bg-dark: #282c34;
+            --text-primary-dark: #e0e7ef;
+            --text-secondary-dark: #95a1b1;
+            --accent-color-dark: #5dade2;
+            --accent-hover-dark: #4a90c2;
+            --green-dark: #48c78e;
+            --orange-dark: #f39c12;
+            --red-dark: #ec6459;
+            --border-dark: #3a3f4b;
+        }
 
-    * {
-      box-sizing: border-box;
-    }
+        html[data-theme="light"] {
+            --bg-color: var(--bg-light);
+            --card-bg-color: var(--card-bg-light);
+            --text-primary: var(--text-primary-light);
+            --text-secondary: var(--text-secondary-light);
+            --accent-color: var(--accent-color-light);
+            --accent-hover: var(--accent-hover-light);
+            --status-available-bg: var(--green-light);
+            --status-grace-bg: var(--orange-light);
+            --status-charging-bg: var(--accent-color-light);
+            --status-text-color: #fff;
+            --error-bg: var(--red-light);
+            --border-color: var(--border-light);
+        }
 
-    body {
-      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
-      background-color: var(--bg);
-      color: var(--text);
-      margin: 0;
-      padding: 2rem;
-      transition: background-color 0.3s ease, color 0.3s ease;
-      line-height: 1.6;
-    }
+        html[data-theme="dark"] {
+            --bg-color: var(--bg-dark);
+            --card-bg-color: var(--card-bg-dark);
+            --text-primary: var(--text-primary-dark);
+            --text-secondary: var(--text-secondary-dark);
+            --accent-color: var(--accent-color-dark);
+            --accent-hover: var(--accent-hover-dark);
+            --status-available-bg: var(--green-dark);
+            --status-grace-bg: var(--orange-dark);
+            --status-charging-bg: var(--accent-color-dark);
+            --status-text-color: #fff; /* Or #1c1e22 for better contrast on some dark shades */
+            --error-bg: var(--red-dark);
+            --border-color: var(--border-dark);
+        }
 
-    .container {
-      max-width: 600px;
-      margin: auto;
-      background: var(--card);
-      padding: 2rem;
-      border-radius: 12px;
-      box-shadow: 0 6px 25px rgba(0,0,0,0.07);
-      transition: background-color 0.3s ease;
-      animation: fadeIn 0.5s ease-out;
-    }
+        /* General Styles */
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
 
-    @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(15px); }
-      to { opacity: 1; transform: translateY(0); }
-    }
+        body {
+            font-family: var(--font-family);
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+            padding: 20px;
+            transition: background-color 0.3s, color 0.3s;
+            line-height: 1.6;
+        }
 
-    h1 {
-      font-size: 1.8rem;
-      font-weight: 600;
-      margin-top: 0;
-      margin-bottom: 1.5rem;
-      color: var(--accent);
-    }
+        .dashboard-container {
+            background-color: var(--card-bg-color);
+            border-radius: 12px;
+            box-shadow: 0 8px 25px rgba(0, 0, 0, 0.1);
+            padding: 25px 30px;
+            width: 100%;
+            max-width: 600px;
+            transition: background-color 0.3s;
+            animation: fadeIn 0.5s ease-out;
+        }
 
-    html[data-theme="dark"] h1 {
-        color: #66bb6a; /* Lighter green for dark mode */
-    }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(20px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
 
-    #status-details strong {
-        font-weight: 500;
-    }
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 25px;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 15px;
+        }
 
-    #status-message {
-      margin-top: 1rem;
-      padding: 1rem;
-      border-radius: 8px;
-      font-weight: 500;
-      text-align: center;
-      transition: background-color 0.3s ease, color 0.3s ease, opacity 0.3s ease;
-    }
-
-    #status-message.available {
-      background-color: #e8f5e9; /* Light green */
-      color: #2e7d32;
-    }
-    html[data-theme="dark"] #status-message.available {
-      background-color: #2c4b32;
-      color: #a5d6a7;
-    }
-
-    #status-message.grace {
-      background-color: #fff8e1; /* Light yellow */
-      color: #ffa000;
-    }
-    html[data-theme="dark"] #status-message.grace {
-      background-color: #533f00;
-      color: #ffecb3;
-    }
-
-    #status-message.charging {
-      background-color: #e3f2fd; /* Light blue */
-      color: #1565c0;
-    }
-    html[data-theme="dark"] #status-message.charging {
-      background-color: #0a3150;
-      color: #90caf9;
-    }
-
-
-    #details-current-user, #details-queue {
-        margin-top: 1rem;
-    }
-
-    #queue-list {
-        padding-left: 1.5em;
-        margin-top: 0.5em;
-    }
-    #queue-list li {
-        margin-bottom: 0.25em;
-    }
-
-    #updated {
-      margin-top: 2rem;
-      font-size: 0.85rem;
-      color: #757575;
-      text-align: center;
-    }
-    html[data-theme="dark"] #updated {
-        color: #aaa;
-    }
-
-    .error-message {
-      color: var(--error);
-      font-weight: 500;
-      text-align: center;
-      padding: 1rem;
-      background-color: #ffebee;
-      border-radius: 8px;
-    }
-    html[data-theme="dark"] .error-message {
-        background-color: #5c1310;
-        color: #ffcdd2;
-    }
-
-    .theme-toggle {
-      position: absolute;
-      top: 1rem;
-      right: 1rem;
-      cursor: pointer;
-      font-size: 0.9rem;
-      background: var(--card);
-      border: 1px solid transparent; /* Placeholder for consistent sizing */
-      color: var(--text);
-      padding: 0.5rem 0.75rem;
-      border-radius: 8px;
-      transition: background 0.3s ease, border-color 0.3s ease;
-      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
-    }
-    html[data-theme="light"] .theme-toggle:hover {
-      border-color: #e0e0e0;
-    }
-    html[data-theme="dark"] .theme-toggle:hover {
-      border-color: #333;
-    }
+        header h1 {
+            font-size: 1.8rem;
+            font-weight: 600;
+            display: flex;
+            align-items: center;
+        }
+         header h1 svg {
+            margin-right: 10px;
+            width: 28px;
+            height: 28px;
+            fill: var(--accent-color);
+        }
 
 
-    @media (max-width: 600px) {
-      body {
-        padding: 1rem;
-      }
-      .container {
-        padding: 1.5rem;
-      }
-      h1 {
-        font-size: 1.5rem;
-      }
-      .theme-toggle {
-        top: 0.5rem;
-        right: 0.5rem;
-      }
-    }
-  </style>
+        .theme-toggle {
+            background-color: transparent;
+            border: 1px solid var(--border-color);
+            color: var(--text-secondary);
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 0.9rem;
+            transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+        }
+        .theme-toggle:hover {
+            background-color: var(--accent-color);
+            color: #fff;
+            border-color: var(--accent-color);
+        }
+
+        /* Status Section */
+        .status-section {
+            margin-bottom: 30px;
+        }
+
+        .status-card {
+            padding: 20px;
+            border-radius: 10px;
+            text-align: center;
+            color: var(--status-text-color);
+            transition: background-color 0.3s ease;
+        }
+        .status-card.available { background-color: var(--status-available-bg); }
+        .status-card.grace { background-color: var(--status-grace-bg); }
+        .status-card.charging { background-color: var(--status-charging-bg); }
+        .status-card.error { background-color: var(--error-bg); }
+
+
+        .status-card .status-icon {
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+        }
+        .status-card .status-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+        .status-card .status-user, .status-card .status-time {
+            font-size: 1rem;
+            margin-bottom: 3px;
+        }
+        .status-card .status-time { font-weight: 500; }
+
+
+        /* Queue Section */
+        .queue-section h2 {
+            font-size: 1.4rem;
+            margin-bottom: 15px;
+            color: var(--text-primary);
+            font-weight: 500;
+        }
+
+        .queue-list {
+            list-style: none;
+        }
+        .queue-list li {
+            background-color: var(--bg-color); /* Slightly different from card for depth */
+            padding: 12px 15px;
+            border-radius: 8px;
+            margin-bottom: 10px;
+            border: 1px solid var(--border-color);
+            font-size: 0.95rem;
+            display: flex;
+            align-items: center;
+        }
+        .queue-list li .position {
+            font-weight: 600;
+            color: var(--accent-color);
+            margin-right: 10px;
+            min-width: 20px;
+        }
+        .queue-list .empty-queue {
+            color: var(--text-secondary);
+            font-style: italic;
+            text-align: center;
+            padding: 15px;
+            background-color: transparent;
+            border: 1px dashed var(--border-color);
+        }
+
+        /* Footer */
+        .footer {
+            margin-top: 30px;
+            text-align: center;
+            font-size: 0.85rem;
+            color: var(--text-secondary);
+        }
+
+        /* Utility for smooth transitions when data loads */
+        .fade-in-content {
+            opacity: 0;
+            animation: contentFadeIn 0.5s forwards;
+        }
+        @keyframes contentFadeIn {
+            to { opacity: 1; }
+        }
+    </style>
 </head>
 <body>
-  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">🌓</button>
-  <div class="container">
-    <h1>⚡ ChargingBot Status</h1>
 
-    <div id="status-message">Loading status...</div>
+    <div class="dashboard-container">
+        <header>
+            <h1>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M19.57 10.37A4.92 4.92 0 0 0 17 9.1a7 7 0 0 0-14 0 6.16 6.16 0 0 0 .23 1.78L2 12.5v4.75A1.75 1.75 0 0 0 3.75 19h.5A1.75 1.75 0 0 0 6 17.25V14h1v3.25A1.75 1.75 0 0 0 8.75 19h.5A1.75 1.75 0 0 0 11 17.25V14h1v3.25A1.75 1.75 0 0 0 13.75 19h.5A1.75 1.75 0 0 0 16 17.25V12.5l-1.09-1.63a6.39 6.39 0 0 0 .21-1.25 5 5 0 0 0-4.08-4.9A5 5 0 0 0 7 9.1a4.92 4.92 0 0 0-2.57 1.27L4 10H2V8h2.62A6.95 6.95 0 0 1 10 4.05 6.95 6.95 0 0 1 15.38 8H18v2h-1.57zM5 12v-.75L4.25 12H5zm4 0v-.75L8.25 12H9zm4 0v-.75L12.25 12H13zm8.75 3.5a.75.75 0 0 1-.75.75h-11a.75.75 0 0 1-.75-.75V13h12.5v2.5zM15 11.25V12H3v-.75L3.75 10h9.5L15 11.25z"/></svg>
+                EV Charger Status
+            </h1>
+            <button class="theme-toggle" id="themeToggle">🌓 Theme</button>
+        </header>
 
-    <div id="details-current-user">
-      <strong>Active User:</strong> <span id="current-user-value">N/A</span>
+        <main>
+            <section class="status-section">
+                <div class="status-card" id="statusCard">
+                    <div class="status-icon" id="statusIcon">🔌</div>
+                    <div class="status-title" id="statusTitle">Loading...</div>
+                    <div class="status-user" id="statusUser"></div>
+                    <div class="status-time" id="statusTime"></div>
+                </div>
+            </section>
+
+            <section class="queue-section">
+                <h2>Waiting Queue</h2>
+                <ul class="queue-list" id="queueList">
+                    <li class="empty-queue">Loading queue...</li>
+                </ul>
+            </section>
+        </main>
+
+        <footer class="footer">
+            <p id="lastUpdated">Last updated: Never</p>
+        </footer>
     </div>
 
-    <div id="details-queue">
-      <strong>Queue:</strong>
-      <ul id="queue-list">
-        <li>None</li>
-      </ul>
-    </div>
+    <script>
+        const REFRESH_INTERVAL_MS = 5000; // Refresh every 5 seconds
 
-    <div id="updated">Fetching latest data...</div>
-  </div>
+        // DOM Elements
+        const themeToggleButton = document.getElementById('themeToggle');
+        const statusCardEl = document.getElementById('statusCard');
+        const statusIconEl = document.getElementById('statusIcon');
+        const statusTitleEl = document.getElementById('statusTitle');
+        const statusUserEl = document.getElementById('statusUser');
+        const statusTimeEl = document.getElementById('statusTime');
+        const queueListEl = document.getElementById('queueList');
+        const lastUpdatedEl = document.getElementById('lastUpdated');
 
-  <script>
-    // DOM Elements
-    const statusMessageEl = document.getElementById("status-message");
-    const currentUserValueEl = document.getElementById("current-user-value");
-    const queueListEl = document.getElementById("queue-list");
-    const updatedEl = document.getElementById("updated");
-
-    // Configuration
-    const REFRESH_INTERVAL_MS = 5000; // Refresh every 5 seconds
-
-    function formatTime(seconds) {
-      if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
-      if (seconds === 0) return "Ending now";
-      const mins = Math.floor(seconds / 60);
-      const secs = seconds % 60;
-      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
-    }
-
-    async function updateStatus() {
-      try {
-        const response = await fetch("/status");
-        if (!response.ok) {
-          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}`);
-        }
-        const data = await response.json();
-
-        // Fade out old status slightly for smooth transition
-        statusMessageEl.style.opacity = "0.7";
-        currentUserValueEl.style.opacity = "0.7";
-        queueListEl.style.opacity = "0.7";
-
-
-        // Current User
-        currentUserValueEl.textContent = data.current_user_id ? `<${data.current_user_id}>` : "Nobody";
-        // Note: To show real names, the /status endpoint in Python would need to resolve IDs.
-        // For now, we display IDs like <U123ABC>.
-
-        // Status Message and Time Remaining
-        if (data.current_user_id) {
-          if (data.is_in_grace_period && data.grace_period_ends_in_seconds !== null) {
-            statusMessageEl.textContent = `Grace Period: ${formatTime(data.grace_period_ends_in_seconds)}`;
-            statusMessageEl.className = "grace";
-          } else if (data.charge_session_remaining_seconds !== null) {
-            statusMessageEl.textContent = `Charging: ${formatTime(data.charge_session_remaining_seconds)}`;
-            statusMessageEl.className = "charging";
-          } else {
-            // User is current, but no specific timing state (should be rare)
-            statusMessageEl.textContent = "User active, status pending...";
-            statusMessageEl.className = ""; // Default style
-          }
-        } else {
-          statusMessageEl.textContent = "Charger Available";
-          statusMessageEl.className = "available";
+        function formatTime(seconds) {
+            if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
+            if (seconds === 0) return "Ending now";
+            const mins = Math.floor(seconds / 60);
+            const secs = seconds % 60;
+            return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
         }
 
-        // Queue
-        if (data.queue && data.queue.length > 0) {
-          queueListEl.innerHTML = data.queue.map((userId, index) => `<li>${index + 1}. <${userId}></li>`).join("");
-        } else {
-          queueListEl.innerHTML = "<li>None</li>";
+        function applyFadeIn(element) {
+            element.classList.remove('fade-in-content');
+            void element.offsetWidth; // Trigger reflow to restart animation
+            element.classList.add('fade-in-content');
         }
 
-        updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+        async function updateDashboard() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) {
+                    throw new Error(`Network error: ${response.status} ${response.statusText}`);
+                }
+                const data = await response.json();
 
-      } catch (error) {
-        console.error("Error fetching status:", error);
-        statusMessageEl.textContent = "⚠️ Error loading status.";
-        statusMessageEl.className = "error-message"; // Use the .error-message style
-        currentUserValueEl.textContent = "N/A";
-        queueListEl.innerHTML = "<li>N/A</li>";
-        updatedEl.textContent = "Failed to update";
-      } finally {
-        // Restore opacity after content update
-        statusMessageEl.style.opacity = "1";
-        currentUserValueEl.style.opacity = "1";
-        queueListEl.style.opacity = "1";
-      }
-    }
+                // --- Update Status Card ---
+                let userText = data.current_user_id ? `User: <${data.current_user_id}>` : "No active user";
 
-    function toggleTheme() {
-      const html = document.documentElement;
-      const currentTheme = html.getAttribute("data-theme");
-      const newTheme = currentTheme === "light" ? "dark" : "light";
-      html.setAttribute("data-theme", newTheme);
-      localStorage.setItem("theme", newTheme);
-    }
+                if (data.current_user_id) {
+                    if (data.is_in_grace_period && data.grace_period_ends_in_seconds !== null) {
+                        statusCardEl.className = 'status-card grace';
+                        statusIconEl.textContent = '⏳'; // Hourglass
+                        statusTitleEl.textContent = 'Grace Period';
+                        statusTimeEl.innerHTML = formatTime(data.grace_period_ends_in_seconds);
+                    } else if (data.charge_session_remaining_seconds !== null) {
+                        statusCardEl.className = 'status-card charging';
+                        statusIconEl.textContent = '🔋'; // Battery
+                        statusTitleEl.textContent = 'Currently Charging';
+                        statusTimeEl.innerHTML = formatTime(data.charge_session_remaining_seconds);
+                    } else { // Should ideally not happen if user_id is set and no times are there
+                        statusCardEl.className = 'status-card'; // Neutral
+                        statusIconEl.textContent = '🤔';
+                        statusTitleEl.textContent = 'User Active - Status Unclear';
+                        statusTimeEl.innerHTML = 'N/A';
+                    }
+                } else { // Charger is available
+                    statusCardEl.className = 'status-card available';
+                    statusIconEl.textContent = '✅'; // Checkmark
+                    statusTitleEl.textContent = 'Charger Available';
+                    userText = "Ready for the next charge!";
+                    statusTimeEl.innerHTML = '';
+                }
+                statusUserEl.innerHTML = userText;
 
-    function loadTheme() {
-      const savedTheme = localStorage.getItem("theme");
-      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-      if (savedTheme) {
-        document.documentElement.setAttribute("data-theme", savedTheme);
-      } else if (prefersDark) {
-        document.documentElement.setAttribute("data-theme", "dark");
-      }
-      // Default is light (already set in HTML)
-    }
+                // Apply fade-in to children of status card if needed, or card itself
+                applyFadeIn(statusTitleEl);
+                applyFadeIn(statusUserEl);
+                applyFadeIn(statusTimeEl);
 
-    // Initialize
-    loadTheme();
-    updateStatus(); // Initial call
-    setInterval(updateStatus, REFRESH_INTERVAL_MS);
-  </script>
+
+                // --- Update Queue List ---
+                if (data.queue && data.queue.length > 0) {
+                    queueListEl.innerHTML = data.queue.map((userId, index) => `
+                        <li>
+                            <span class="position">${index + 1}.</span>
+                            <span><${userId}></span>
+                        </li>
+                    `).join("");
+                } else {
+                    queueListEl.innerHTML = '<li class="empty-queue">Queue is empty</li>';
+                }
+                applyFadeIn(queueListEl);
+
+
+                // --- Update Last Updated Time ---
+                lastUpdatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+            } catch (error) {
+                console.error('Failed to update dashboard:', error);
+                statusCardEl.className = 'status-card error';
+                statusIconEl.textContent = '⚠️';
+                statusTitleEl.textContent = 'Error Loading Status';
+                statusUserEl.innerHTML = 'Could not fetch data from the server.';
+                statusTimeEl.innerHTML = '';
+                queueListEl.innerHTML = '<li class="empty-queue">Could not load queue.</li>';
+            }
+        }
+
+        // --- Theme Management ---
+        function setTheme(themeName) {
+            localStorage.setItem('theme', themeName);
+            document.documentElement.setAttribute('data-theme', themeName);
+            themeToggleButton.textContent = themeName === 'dark' ? '☀️ Light' : '🌙 Dark';
+        }
+
+        function toggleTheme() {
+            if (localStorage.getItem('theme') === 'dark') {
+                setTheme('light');
+            } else {
+                setTheme('dark');
+            }
+        }
+
+        function loadInitialTheme() {
+            const savedTheme = localStorage.getItem('theme');
+            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            if (savedTheme) {
+                setTheme(savedTheme);
+            } else if (prefersDark) {
+                setTheme('dark');
+            } else {
+                setTheme('light'); // Default
+            }
+        }
+
+        themeToggleButton.addEventListener('click', toggleTheme);
+
+        // --- Initial Load and Interval ---
+        loadInitialTheme();
+        updateDashboard(); // Initial call
+        setInterval(updateDashboard, REFRESH_INTERVAL_MS);
+
+    </script>
 </body>
 </html>
