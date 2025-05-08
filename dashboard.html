@@ -1,66 +1,165 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="light">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
   <title>ChargingBot Dashboard</title>
-  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    body { font-family: system-ui, sans-serif; }
-    .countdown { font-variant-numeric: tabular-nums; }
+    :root {
+      --bg-light: #f9f9f9;
+      --bg-dark: #121212;
+      --card-light: #ffffff;
+      --card-dark: #1e1e1e;
+      --text-light: #222;
+      --text-dark: #eee;
+      --accent: #4CAF50;
+      --error: #e53935;
+    }
+
+    html[data-theme="light"] {
+      --bg: var(--bg-light);
+      --card: var(--card-light);
+      --text: var(--text-light);
+    }
+
+    html[data-theme="dark"] {
+      --bg: var(--bg-dark);
+      --card: var(--card-dark);
+      --text: var(--text-dark);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: system-ui, sans-serif;
+      background-color: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      transition: background 0.3s ease, color 0.3s ease;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: auto;
+      background: var(--card);
+      padding: 2rem;
+      border-radius: 12px;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.05);
+      transition: background 0.3s ease;
+      animation: fadeIn 0.6s ease;
+    }
+
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    h1 {
+      font-size: 1.6rem;
+      margin-bottom: 1rem;
+    }
+
+    #status {
+      margin-top: 1rem;
+      line-height: 1.6;
+      transition: opacity 0.3s ease;
+    }
+
+    #updated {
+      margin-top: 1.5rem;
+      font-size: 0.9rem;
+      color: gray;
+    }
+
+    .error {
+      color: var(--error);
+    }
+
+    .theme-toggle {
+      float: right;
+      cursor: pointer;
+      font-size: 0.85rem;
+      background: transparent;
+      border: none;
+      color: var(--text);
+      padding: 0.25rem 0.5rem;
+      border-radius: 6px;
+      transition: background 0.3s ease;
+    }
+
+    .theme-toggle:hover {
+      background: rgba(0, 0, 0, 0.05);
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 1rem;
+      }
+      .container {
+        padding: 1.5rem;
+      }
+    }
   </style>
 </head>
-<body class="bg-gray-50 text-gray-800 min-h-screen flex items-center justify-center p-4">
-  <div class="w-full max-w-xl bg-white rounded-2xl shadow-lg p-6 space-y-6">
-    <h1 class="text-2xl font-bold text-center">⚡ ChargingBot Status</h1>
-    <div id="status" class="space-y-4">
-      <div>
-        <p class="text-gray-600 text-sm">Currently Charging:</p>
-        <p id="currentUser" class="text-xl font-semibold text-gray-900">—</p>
-        <p id="timeRemaining" class="countdown text-gray-500"></p>
-      </div>
-      <div>
-        <p class="text-gray-600 text-sm">Queue:</p>
-        <ul id="queueList" class="list-decimal list-inside text-gray-800 space-y-1"></ul>
-      </div>
-    </div>
-    <p class="text-xs text-center text-gray-400">Updated <span id="timestamp">—</span></p>
+<body>
+  <div class="container">
+    <button class="theme-toggle" onclick="toggleTheme()">🌓 Toggle Theme</button>
+    <h1>⚡ ChargingBot Status</h1>
+    <div id="status">Loading...</div>
+    <div id="updated">Updated just now</div>
   </div>
 
   <script>
     function formatTime(seconds) {
-      if (!seconds || seconds <= 0) return "Now";
-      const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
-      const secs = Math.floor(seconds % 60).toString().padStart(2, '0');
-      return `${mins}:${secs} remaining`;
+      if (seconds <= 0) return "Now";
+      const mins = Math.floor(seconds / 60);
+      const secs = seconds % 60;
+      return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
     }
 
     async function updateStatus() {
+      const statusEl = document.getElementById("status");
       try {
         const res = await fetch("/status");
-        if (!res.ok) throw new Error("Failed to fetch");
+        if (!res.ok) throw new Error("Fetch failed");
         const data = await res.json();
 
-        document.getElementById("currentUser").textContent = data.current_user || "Available";
-        document.getElementById("queueList").innerHTML = data.queue.length
-          ? data.queue.map((user, i) => `<li>${user}</li>`).join("")
-          : "<li>No users in queue</li>";
-
-        if (data.time_remaining != null) {
-          document.getElementById("timeRemaining").textContent = formatTime(data.time_remaining);
-        } else {
-          document.getElementById("timeRemaining").textContent = "";
-        }
-
-        document.getElementById("timestamp").textContent = new Date().toLocaleTimeString();
+        statusEl.style.opacity = "0.5";
+        statusEl.innerHTML = `
+          <strong>Currently Charging:</strong> ${data.current_user || "Nobody"}<br>
+          <strong>Time Remaining:</strong> ${data.time_remaining !== null ? formatTime(data.time_remaining) : "N/A"}<br>
+          <strong>Queue:</strong><br>
+          ${data.queue.length ? data.queue.map((name, i) => `${i + 1}. ${name}`).join("<br>") : "None"}
+        `;
+        document.getElementById("updated").innerText = `Updated ${new Date().toLocaleTimeString()}`;
       } catch (err) {
-        console.error("Status update failed:", err);
-        document.getElementById("status").innerHTML = "<p class='text-red-600'>Error loading status.</p>";
+        statusEl.innerHTML = '<span class="error">⚠️ Error loading status.</span>';
+      } finally {
+        statusEl.style.opacity = "1";
       }
     }
 
-    setInterval(updateStatus, 1000); // every second
-    updateStatus(); // initial call
+    function toggleTheme() {
+      const html = document.documentElement;
+      const newTheme = html.getAttribute("data-theme") === "light" ? "dark" : "light";
+      html.setAttribute("data-theme", newTheme);
+      localStorage.setItem("theme", newTheme);
+    }
+
+    function loadTheme() {
+      const saved = localStorage.getItem("theme");
+      if (saved === "dark") {
+        document.documentElement.setAttribute("data-theme", "dark");
+      }
+    }
+
+    // Initialize
+    loadTheme();
+    updateStatus();
+    setInterval(updateStatus, 1000);
   </script>
 </body>
 </html>
