@@ -302,6 +302,12 @@ def request_command(ack, body, say):
             message_to_send = f"🟢 Charging queue was empty. <@{user_id}>, the charger is now reserved for you. Please plug in within {int(GRACE_PERIOD / 60)} minutes."
         else:
             # Charger is busy, add to queue
+            logging.info(f"/request: Attempting to add user_id='{user_id}' (type: {type(user_id)}) to queue.")
+            # Ensure user_id is a non-empty string, though Slack usually guarantees this for body["user_id"]
+            if not user_id or not isinstance(user_id, str):
+                logging.error(f"/request: Invalid user_id '{user_id}' received. Not adding to queue.")
+                say(f"Sorry, <@{body['user_id']}>, there was an issue with your request (invalid user identifier). Please try again.")
+                return  # Or handle error appropriately
             charging_state["queue"].append(user_id)
             position = len(charging_state["queue"])
             logging.info(f"/request by {user_name} ({user_id}). Added to queue at position {position}.")
