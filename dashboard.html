@@ -12,8 +12,9 @@
       --card-dark: #1e1e1e;
       --text-light: #222;
       --text-dark: #eee;
-      --accent: #4CAF50;
-      --error: #e53935;
+      --accent: #4CAF50; /* Green for available/charging */
+      --warning: #FFC107; /* Yellow for grace period */
+      --error: #e53935;   /* Red for errors */
     }
 
     html[data-theme="light"] {
@@ -33,12 +34,13 @@
     }
 
     body {
-      font-family: system-ui, sans-serif;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Oxygen, Ubuntu, Cantarell, "Open Sans", "Helvetica Neue", sans-serif;
       background-color: var(--bg);
       color: var(--text);
       margin: 0;
       padding: 2rem;
-      transition: background 0.3s ease, color 0.3s ease;
+      transition: background-color 0.3s ease, color 0.3s ease;
+      line-height: 1.6;
     }
 
     .container {
@@ -47,52 +49,125 @@
       background: var(--card);
       padding: 2rem;
       border-radius: 12px;
-      box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-      transition: background 0.3s ease;
-      animation: fadeIn 0.6s ease;
+      box-shadow: 0 6px 25px rgba(0,0,0,0.07);
+      transition: background-color 0.3s ease;
+      animation: fadeIn 0.5s ease-out;
     }
 
     @keyframes fadeIn {
-      from { opacity: 0; transform: translateY(10px); }
+      from { opacity: 0; transform: translateY(15px); }
       to { opacity: 1; transform: translateY(0); }
     }
 
     h1 {
-      font-size: 1.6rem;
-      margin-bottom: 1rem;
+      font-size: 1.8rem;
+      font-weight: 600;
+      margin-top: 0;
+      margin-bottom: 1.5rem;
+      color: var(--accent);
     }
 
-    #status {
+    html[data-theme="dark"] h1 {
+        color: #66bb6a; /* Lighter green for dark mode */
+    }
+
+    #status-details strong {
+        font-weight: 500;
+    }
+
+    #status-message {
       margin-top: 1rem;
-      line-height: 1.6;
-      transition: opacity 0.3s ease;
+      padding: 1rem;
+      border-radius: 8px;
+      font-weight: 500;
+      text-align: center;
+      transition: background-color 0.3s ease, color 0.3s ease, opacity 0.3s ease;
+    }
+
+    #status-message.available {
+      background-color: #e8f5e9; /* Light green */
+      color: #2e7d32;
+    }
+    html[data-theme="dark"] #status-message.available {
+      background-color: #2c4b32;
+      color: #a5d6a7;
+    }
+
+    #status-message.grace {
+      background-color: #fff8e1; /* Light yellow */
+      color: #ffa000;
+    }
+    html[data-theme="dark"] #status-message.grace {
+      background-color: #533f00;
+      color: #ffecb3;
+    }
+
+    #status-message.charging {
+      background-color: #e3f2fd; /* Light blue */
+      color: #1565c0;
+    }
+    html[data-theme="dark"] #status-message.charging {
+      background-color: #0a3150;
+      color: #90caf9;
+    }
+
+
+    #details-current-user, #details-queue {
+        margin-top: 1rem;
+    }
+
+    #queue-list {
+        padding-left: 1.5em;
+        margin-top: 0.5em;
+    }
+    #queue-list li {
+        margin-bottom: 0.25em;
     }
 
     #updated {
-      margin-top: 1.5rem;
-      font-size: 0.9rem;
-      color: gray;
+      margin-top: 2rem;
+      font-size: 0.85rem;
+      color: #757575;
+      text-align: center;
+    }
+    html[data-theme="dark"] #updated {
+        color: #aaa;
     }
 
-    .error {
+    .error-message {
       color: var(--error);
+      font-weight: 500;
+      text-align: center;
+      padding: 1rem;
+      background-color: #ffebee;
+      border-radius: 8px;
+    }
+    html[data-theme="dark"] .error-message {
+        background-color: #5c1310;
+        color: #ffcdd2;
     }
 
     .theme-toggle {
-      float: right;
+      position: absolute;
+      top: 1rem;
+      right: 1rem;
       cursor: pointer;
-      font-size: 0.85rem;
-      background: transparent;
-      border: none;
+      font-size: 0.9rem;
+      background: var(--card);
+      border: 1px solid transparent; /* Placeholder for consistent sizing */
       color: var(--text);
-      padding: 0.25rem 0.5rem;
-      border-radius: 6px;
-      transition: background 0.3s ease;
+      padding: 0.5rem 0.75rem;
+      border-radius: 8px;
+      transition: background 0.3s ease, border-color 0.3s ease;
+      box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+    }
+    html[data-theme="light"] .theme-toggle:hover {
+      border-color: #e0e0e0;
+    }
+    html[data-theme="dark"] .theme-toggle:hover {
+      border-color: #333;
     }
 
-    .theme-toggle:hover {
-      background: rgba(0, 0, 0, 0.05);
-    }
 
     @media (max-width: 600px) {
       body {
@@ -101,65 +176,139 @@
       .container {
         padding: 1.5rem;
       }
+      h1 {
+        font-size: 1.5rem;
+      }
+      .theme-toggle {
+        top: 0.5rem;
+        right: 0.5rem;
+      }
     }
   </style>
 </head>
 <body>
+  <button class="theme-toggle" onclick="toggleTheme()" aria-label="Toggle theme">🌓</button>
   <div class="container">
-    <button class="theme-toggle" onclick="toggleTheme()">🌓 Toggle Theme</button>
     <h1>⚡ ChargingBot Status</h1>
-    <div id="status">Loading...</div>
-    <div id="updated">Updated just now</div>
+
+    <div id="status-message">Loading status...</div>
+
+    <div id="details-current-user">
+      <strong>Active User:</strong> <span id="current-user-value">N/A</span>
+    </div>
+
+    <div id="details-queue">
+      <strong>Queue:</strong>
+      <ul id="queue-list">
+        <li>None</li>
+      </ul>
+    </div>
+
+    <div id="updated">Fetching latest data...</div>
   </div>
 
   <script>
+    // DOM Elements
+    const statusMessageEl = document.getElementById("status-message");
+    const currentUserValueEl = document.getElementById("current-user-value");
+    const queueListEl = document.getElementById("queue-list");
+    const updatedEl = document.getElementById("updated");
+
+    // Configuration
+    const REFRESH_INTERVAL_MS = 5000; // Refresh every 5 seconds
+
     function formatTime(seconds) {
-      if (seconds <= 0) return "Now";
+      if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
+      if (seconds === 0) return "Ending now";
       const mins = Math.floor(seconds / 60);
       const secs = seconds % 60;
       return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
     }
 
     async function updateStatus() {
-      const statusEl = document.getElementById("status");
       try {
-        const res = await fetch("/status");
-        if (!res.ok) throw new Error("Fetch failed");
-        const data = await res.json();
+        const response = await fetch("/status");
+        if (!response.ok) {
+          throw new Error(`Network response was not ok: ${response.status} ${response.statusText}`);
+        }
+        const data = await response.json();
 
-        statusEl.style.opacity = "0.5";
-        statusEl.innerHTML = `
-          <strong>Currently Charging:</strong> ${data.current_user || "Nobody"}<br>
-          <strong>Time Remaining:</strong> ${data.time_remaining !== null ? formatTime(data.time_remaining) : "N/A"}<br>
-          <strong>Queue:</strong><br>
-          ${data.queue.length ? data.queue.map((name, i) => `${i + 1}. ${name}`).join("<br>") : "None"}
-        `;
-        document.getElementById("updated").innerText = `Updated ${new Date().toLocaleTimeString()}`;
-      } catch (err) {
-        statusEl.innerHTML = '<span class="error">⚠️ Error loading status.</span>';
+        // Fade out old status slightly for smooth transition
+        statusMessageEl.style.opacity = "0.7";
+        currentUserValueEl.style.opacity = "0.7";
+        queueListEl.style.opacity = "0.7";
+
+
+        // Current User
+        currentUserValueEl.textContent = data.current_user_id ? `<${data.current_user_id}>` : "Nobody";
+        // Note: To show real names, the /status endpoint in Python would need to resolve IDs.
+        // For now, we display IDs like <U123ABC>.
+
+        // Status Message and Time Remaining
+        if (data.current_user_id) {
+          if (data.is_in_grace_period && data.grace_period_ends_in_seconds !== null) {
+            statusMessageEl.textContent = `Grace Period: ${formatTime(data.grace_period_ends_in_seconds)}`;
+            statusMessageEl.className = "grace";
+          } else if (data.charge_session_remaining_seconds !== null) {
+            statusMessageEl.textContent = `Charging: ${formatTime(data.charge_session_remaining_seconds)}`;
+            statusMessageEl.className = "charging";
+          } else {
+            // User is current, but no specific timing state (should be rare)
+            statusMessageEl.textContent = "User active, status pending...";
+            statusMessageEl.className = ""; // Default style
+          }
+        } else {
+          statusMessageEl.textContent = "Charger Available";
+          statusMessageEl.className = "available";
+        }
+
+        // Queue
+        if (data.queue && data.queue.length > 0) {
+          queueListEl.innerHTML = data.queue.map((userId, index) => `<li>${index + 1}. <${userId}></li>`).join("");
+        } else {
+          queueListEl.innerHTML = "<li>None</li>";
+        }
+
+        updatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
+
+      } catch (error) {
+        console.error("Error fetching status:", error);
+        statusMessageEl.textContent = "⚠️ Error loading status.";
+        statusMessageEl.className = "error-message"; // Use the .error-message style
+        currentUserValueEl.textContent = "N/A";
+        queueListEl.innerHTML = "<li>N/A</li>";
+        updatedEl.textContent = "Failed to update";
       } finally {
-        statusEl.style.opacity = "1";
+        // Restore opacity after content update
+        statusMessageEl.style.opacity = "1";
+        currentUserValueEl.style.opacity = "1";
+        queueListEl.style.opacity = "1";
       }
     }
 
     function toggleTheme() {
       const html = document.documentElement;
-      const newTheme = html.getAttribute("data-theme") === "light" ? "dark" : "light";
+      const currentTheme = html.getAttribute("data-theme");
+      const newTheme = currentTheme === "light" ? "dark" : "light";
       html.setAttribute("data-theme", newTheme);
       localStorage.setItem("theme", newTheme);
     }
 
     function loadTheme() {
-      const saved = localStorage.getItem("theme");
-      if (saved === "dark") {
+      const savedTheme = localStorage.getItem("theme");
+      const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+      if (savedTheme) {
+        document.documentElement.setAttribute("data-theme", savedTheme);
+      } else if (prefersDark) {
         document.documentElement.setAttribute("data-theme", "dark");
       }
+      // Default is light (already set in HTML)
     }
 
     // Initialize
     loadTheme();
-    updateStatus();
-    setInterval(updateStatus, 1000);
+    updateStatus(); // Initial call
+    setInterval(updateStatus, REFRESH_INTERVAL_MS);
   </script>
 </body>
 </html>
