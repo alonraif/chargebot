@@ -316,6 +316,7 @@
                 const data = await response.json();
 
                 // --- Update Status Card ---
+                console.log("Raw current_user_id from server:", data.current_user_id);
                 let userText = data.current_user_id ? `User: <${data.current_user_id}>` : "No active user";
                 let currentStatusClass = statusCardEl.className;
                 let newStatusClass = '';
