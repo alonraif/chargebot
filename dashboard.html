@@ -5,10 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EV Charger Dashboard</title>
     <style>
-        /* CSS Variables for Theming (same as before) */
+        /* Enhanced CSS Variables for smooth transitions */
         :root {
             --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
-
             --bg-light: #f4f7f9;
             --card-bg-light: #ffffff;
             --text-primary-light: #2c3e50;
@@ -19,7 +18,6 @@
             --orange-light: #e67e22;
             --red-light: #e74c3c;
             --border-light: #e0e0e0;
-
             --bg-dark: #1c1e22;
             --card-bg-dark: #282c34;
             --text-primary-dark: #e0e7ef;
@@ -63,12 +61,6 @@
         }
 
         /* General Styles */
-        * {
-            box-sizing: border-box;
-            margin: 0;
-            padding: 0;
-        }
-
         body {
             font-family: var(--font-family);
             background-color: var(--bg-color);
@@ -89,143 +81,28 @@
             padding: 25px 30px;
             width: 100%;
             max-width: 600px;
-            transition: background-color 0.3s;
-            /* Initial fade-in for the whole container */
             opacity: 0;
             animation: containerFadeIn 0.7s ease-out forwards;
         }
 
-        @keyframes containerFadeIn { /* Renamed for clarity */
+        @keyframes containerFadeIn {
             from { opacity: 0; transform: translateY(20px); }
             to { opacity: 1; transform: translateY(0); }
         }
 
-        header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 25px;
-            border-bottom: 1px solid var(--border-color);
-            padding-bottom: 15px;
-        }
-
-        header h1 {
-            font-size: 1.8rem;
-            font-weight: 600;
-            display: flex;
-            align-items: center;
-        }
-         header h1 svg {
-            margin-right: 10px;
-            width: 28px;
-            height: 28px;
-            fill: var(--accent-color);
-        }
-
-
-        .theme-toggle {
-            background-color: transparent;
-            border: 1px solid var(--border-color);
-            color: var(--text-secondary);
-            padding: 8px 12px;
-            border-radius: 8px;
-            cursor: pointer;
-            font-size: 0.9rem;
-            transition: background-color 0.2s, color 0.2s, border-color 0.2s;
-        }
-        .theme-toggle:hover {
-            background-color: var(--accent-color);
-            color: #fff;
-            border-color: var(--accent-color);
-        }
-
-        /* Status Section */
-        .status-section {
-            margin-bottom: 30px;
-        }
-
-        .status-card {
-            padding: 20px;
-            border-radius: 10px;
-            text-align: center;
-            color: var(--status-text-color);
-            transition: background-color 0.4s ease; /* Smoother bg transition */
-        }
+        .status-section { margin-bottom: 30px; }
+        .status-card { padding: 20px; border-radius: 10px; text-align: center; color: var(--status-text-color); transition: background-color 0.4s ease; }
         .status-card.available { background-color: var(--status-available-bg); }
         .status-card.grace { background-color: var(--status-grace-bg); }
         .status-card.charging { background-color: var(--status-charging-bg); }
         .status-card.error { background-color: var(--error-bg); }
 
-        /* Elements within status card will have a subtle opacity transition if their content changes */
-        .status-card .status-icon,
-        .status-card .status-title,
-        .status-card .status-user,
-        .status-card .status-time {
-            transition: opacity 0.3s ease-in-out;
-        }
-
-        .status-card .status-icon {
-            font-size: 2.5rem;
-            margin-bottom: 10px;
-        }
-        .status-card .status-title {
-            font-size: 1.3rem;
-            font-weight: 600;
-            margin-bottom: 5px;
-        }
-        .status-card .status-user, .status-card .status-time {
-            font-size: 1rem;
-            margin-bottom: 3px;
-        }
+        .status-card .status-icon { font-size: 2.5rem; margin-bottom: 10px; }
+        .status-card .status-title { font-size: 1.3rem; font-weight: 600; margin-bottom: 5px; }
+        .status-card .status-user, .status-card .status-time { font-size: 1rem; margin-bottom: 3px; }
         .status-card .status-time { font-weight: 500; }
 
-
-        /* Queue Section */
-        .queue-section h2 {
-            font-size: 1.4rem;
-            margin-bottom: 15px;
-            color: var(--text-primary);
-            font-weight: 500;
-        }
-
-        .queue-list {
-            list-style: none;
-            transition: opacity 0.3s ease-in-out; /* Transition for the whole list if it appears/disappears */
-        }
-        .queue-list li {
-            background-color: var(--bg-color);
-            padding: 12px 15px;
-            border-radius: 8px;
-            margin-bottom: 10px;
-            border: 1px solid var(--border-color);
-            font-size: 0.95rem;
-            display: flex;
-            align-items: center;
-            /* Individual list items can also have a subtle transition if needed */
-            /* transition: background-color 0.3s, border-color 0.3s; */
-        }
-        .queue-list li .position {
-            font-weight: 600;
-            color: var(--accent-color);
-            margin-right: 10px;
-            min-width: 20px;
-        }
-        .queue-list .empty-queue {
-            color: var(--text-secondary);
-            font-style: italic;
-            text-align: center;
-            padding: 15px;
-            background-color: transparent;
-            border: 1px dashed var(--border-color);
-        }
-
-        /* Footer */
-        .footer {
-            margin-top: 30px;
-            text-align: center;
-            font-size: 0.85rem;
-            color: var(--text-secondary);
-        }
+        .loading-indicator { font-size: 1.2rem; color: var(--accent-color); padding: 10px 0; }
     </style>
 </head>
 <body>
@@ -244,8 +121,9 @@
                 <div class="status-card" id="statusCard">
                     <div class="status-icon" id="statusIcon">🔌</div>
                     <div class="status-title" id="statusTitle">Loading...</div>
-                    <div class="status-user" id="statusUser"></div>
-                    <div class="status-time" id="statusTime"></div>
+                    <div class="status-user" id="statusUser">Loading user...</div>
+                    <div class="status-time" id="statusTime">Please wait...</div>
+                    <div id="loadingIndicator" class="loading-indicator">Loading data...</div>
                 </div>
             </section>
 
@@ -263,9 +141,8 @@
     </div>
 
     <script>
-        const REFRESH_INTERVAL_MS = 1000; // Refresh every 1 second
+        const REFRESH_INTERVAL_MS = 1000;
 
-        // DOM Elements
         const themeToggleButton = document.getElementById('themeToggle');
         const statusCardEl = document.getElementById('statusCard');
         const statusIconEl = document.getElementById('statusIcon');
@@ -274,20 +151,8 @@
         const statusTimeEl = document.getElementById('statusTime');
         const queueListEl = document.getElementById('queueList');
         const lastUpdatedEl = document.getElementById('lastUpdated');
+        const loadingIndicatorEl = document.getElementById('loadingIndicator');
 
-        // Helper to update text content and manage a very brief opacity flicker if content changes
-        // This prevents jarring updates for rapidly changing numbers (like timers)
-        // but gives a subtle hint when static text changes.
-        function updateText(element, newText) {
-            if (element.innerHTML !== newText) { // Use innerHTML if you're passing HTML, textContent for plain text
-                element.style.opacity = '0.7'; // Briefly dim
-                element.innerHTML = newText;   // Update content
-                setTimeout(() => {
-                    element.style.opacity = '1'; // Restore full opacity
-                }, 50); // Short delay
-            }
-        }
-        // Simpler version for textContent if you are sure no HTML is passed
         function updateTextContent(element, newText) {
             if (element.textContent !== newText) {
                 element.style.opacity = '0.7';
@@ -297,7 +162,6 @@
                 }, 50);
             }
         }
-
 
         function formatTime(seconds) {
             if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
@@ -309,141 +173,77 @@
 
         async function updateDashboard() {
             try {
+                loadingIndicatorEl.style.display = 'block'; // Show loading indicator
+
                 const response = await fetch('/status');
                 if (!response.ok) {
                     throw new Error(`Network error: ${response.status} ${response.statusText}`);
                 }
+
                 const data = await response.json();
+                let userText = "No active user";
 
-                // --- Update Status Card ---
-                console.log("Raw current_user_id from server:", data.current_user_id);
                 if (data.current_user_id) {
-  // Fetch the display name from the backend API
-  fetch(`/slack/username?user_id=${data.current_user_id}`)
-    .then(response => response.json())
-    .then(userData => {
-      // If display name is available, use it, otherwise fallback to real_name
-      let userText = `User: ${userData.display_name || userData.real_name || data.current_user_id}`;
-      updateText(statusUserEl, userText); // Update the user element
-    })
-    .catch(err => {
-      console.error("Failed to fetch Slack username:", err);
-      updateText(statusUserEl, `User: ${data.current_user_id}`); // Fallback to user ID in case of error
-    });
-} else {
-  updateText(statusUserEl, "No active user");
-}
+                    try {
+                        const userResponse = await fetch(`/slack/username?user_id=${data.current_user_id}`);
+                        const userData = await userResponse.json();
+                        userText = userData.display_name || userData.real_name || `User ID: ${data.current_user_id}`;
+                    } catch (error) {
+                        userText = `Failed to fetch user: ${data.current_user_id}`;
+                    }
+                }
+                updateTextContent(statusUserEl, userText);
 
-                let currentStatusClass = statusCardEl.className;
                 let newStatusClass = '';
-
                 if (data.current_user_id) {
-                    if (data.is_in_grace_period && data.grace_period_ends_in_seconds !== null) {
-                        newStatusClass = 'status-card grace';
-                        updateTextContent(statusIconEl, '⏳');
-                        updateTextContent(statusTitleEl, 'Grace Period');
-                        updateText(statusTimeEl, formatTime(data.grace_period_ends_in_seconds));
-                    } else if (data.charge_session_remaining_seconds !== null) {
-                        newStatusClass = 'status-card charging';
-                        updateTextContent(statusIconEl, '🔋');
-                        updateTextContent(statusTitleEl, 'Currently Charging');
-                        updateText(statusTimeEl, formatTime(data.charge_session_remaining_seconds));
+                    if (data.is_in_grace_period && data.grace_period_ends_at) {
+                        newStatusClass = 'grace';
+                        updateTextContent(statusTitleEl, 'Charging Grace Period');
+                    } else if (data.is_charging) {
+                        newStatusClass = 'charging';
+                        updateTextContent(statusTitleEl, 'Charging Now');
                     } else {
-                        newStatusClass = 'status-card';
-                        updateTextContent(statusIconEl, '🤔');
-                        updateTextContent(statusTitleEl, 'User Active - Status Unclear');
-                        updateText(statusTimeEl, 'N/A');
+                        newStatusClass = 'available';
+                        updateTextContent(statusTitleEl, 'Available');
+                    }
+
+                    if (data.current_user_id) {
+                        const secondsLeft = Math.round((new Date(data.grace_period_ends_at) - new Date()) / 1000);
+                        updateTextContent(statusTimeEl, formatTime(secondsLeft));
                     }
                 } else {
-                    newStatusClass = 'status-card available';
-                    updateTextContent(statusIconEl, '✅');
-                    updateTextContent(statusTitleEl, 'Charger Available');
-                    userText = "Ready for the next charge!";
-                    updateText(statusTimeEl, '');
+                    newStatusClass = 'available';
+                    updateTextContent(statusTitleEl, 'Available');
+                    updateTextContent(statusTimeEl, 'No current user');
                 }
 
-                if (currentStatusClass !== newStatusClass) {
-                    statusCardEl.className = newStatusClass; // Update class only if it changes
-                }
-                updateText(statusUserEl, userText);
+                statusCardEl.classList.remove('available', 'grace', 'charging', 'error');
+                statusCardEl.classList.add(newStatusClass);
 
-
-                // --- Update Queue List ---
-                // To avoid full list re-render if not necessary, we could compare, but for simplicity:
                 if (data.queue && data.queue.length > 0) {
-                    const queueHTML = data.queue.map((userId, index) => `
-                        <li>
-                            <span class="position">${index + 1}.</span>
-                            <span><${userId}></span>
-                        </li>
-                    `).join("");
-                    // Only update innerHTML if it has actually changed to prevent flicker
-                    if (queueListEl.innerHTML !== queueHTML) {
-                        queueListEl.innerHTML = queueHTML;
-                    }
+                    queueListEl.innerHTML = data.queue.map(user => `<li>${user}</li>`).join('');
                 } else {
-                    const emptyQueueHTML = '<li class="empty-queue">Queue is empty</li>';
-                    if (queueListEl.innerHTML !== emptyQueueHTML) {
-                        queueListEl.innerHTML = emptyQueueHTML;
-                    }
+                    queueListEl.innerHTML = '<li class="empty-queue">No one is waiting</li>';
                 }
 
-                // --- Update Last Updated Time ---
-                // This will always change, so direct update is fine
-                lastUpdatedEl.textContent = `Last updated: ${new Date().toLocaleTimeString()}`;
-
+                updateTextContent(lastUpdatedEl, `Last updated: ${new Date().toLocaleTimeString()}`);
             } catch (error) {
-                console.error('Failed to update dashboard:', error);
-                if (statusCardEl.className !== 'status-card error') {
-                     statusCardEl.className = 'status-card error';
-                }
-                updateTextContent(statusIconEl, '⚠️');
-                updateTextContent(statusTitleEl, 'Error Loading Status');
-                updateText(statusUserEl, 'Could not fetch data from the server.');
-                updateText(statusTimeEl, '');
-                if (queueListEl.innerHTML !== '<li class="empty-queue">Could not load queue.</li>') {
-                    queueListEl.innerHTML = '<li class="empty-queue">Could not load queue.</li>';
-                }
+                console.error('Error updating dashboard:', error);
+                statusCardEl.classList.add('error');
+                updateTextContent(statusTitleEl, 'Error');
+                updateTextContent(statusUserEl, 'Please try again later.');
+                updateTextContent(statusTimeEl, '');
+                queueListEl.innerHTML = '<li class="empty-queue">Failed to load queue</li>';
+            } finally {
+                loadingIndicatorEl.style.display = 'none'; // Hide loading indicator
             }
         }
 
-        // --- Theme Management (same as before) ---
-        function setTheme(themeName) {
-            localStorage.setItem('theme', themeName);
-            document.documentElement.setAttribute('data-theme', themeName);
-            themeToggleButton.textContent = themeName === 'dark' ? '☀️ Light' : '🌙 Dark';
-        }
-
-        function toggleTheme() {
-            if (localStorage.getItem('theme') === 'dark') {
-                setTheme('light');
-            } else {
-                setTheme('dark');
-            }
-        }
-
-        function loadInitialTheme() {
-            const savedTheme = localStorage.getItem('theme');
-            const prefersDark = window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
-            if (savedTheme) {
-                setTheme(savedTheme);
-            } else if (prefersDark) {
-                setTheme('dark');
-            } else {
-                setTheme('light');
-            }
-        }
-
-        themeToggleButton.addEventListener('click', toggleTheme);
-
-        // --- Initial Load and Interval ---
-        loadInitialTheme();
-        // Wait for initial container fade-in to complete before first data load for smoother feel
-        setTimeout(() => {
-            updateDashboard();
-            setInterval(updateDashboard, REFRESH_INTERVAL_MS);
-        }, 700); // Matches containerFadeIn animation duration
-
+        setInterval(updateDashboard, REFRESH_INTERVAL_MS);
+        themeToggleButton.addEventListener('click', () => {
+            const currentTheme = document.documentElement.getAttribute('data-theme');
+            document.documentElement.setAttribute('data-theme', currentTheme === 'light' ? 'dark' : 'light');
+        });
     </script>
 </body>
 </html>
