@@ -21,11 +21,12 @@
         @keyframes containerFadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; }
         header h1 { font-size: 1.8rem; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 10px; color: var(--text-primary); }
-        header h1 svg { width: 30px; height: 30px; fill: var(--accent-color); }
+        /* MODIFIED: Removed 'fill' property from here to allow SVG's own fill attribute to work */
+        header h1 svg { width: 30px; height: 30px; /* fill: var(--accent-color); */ }
         .theme-toggle { background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
         .theme-toggle:hover { background-color: var(--accent-color); color: var(--status-text-color); border-color: var(--accent-color); }
         .status-section { margin-bottom: 30px; }
-        .status-card { padding: 25px; border-radius: 10px; text-align: center; color: var(--status-text-color); transition: background-color 0.4s ease, transform 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.05); }
+        .status-card { padding: 25px; border-radius: 10px; text-align: center; color: var(--status-text-color); transition: background-color 0.4s ease, transform 0.3s ease; box-shadow: 0 4px 15px rgba(0,0,0,0.05); position: relative; }
         .status-card:hover { transform: translateY(-3px); }
         .status-card.available { background-color: var(--status-available-bg); }
         .status-card.grace { background-color: var(--status-grace-bg); }
@@ -40,7 +41,22 @@
         .queue-list li { background-color: var(--bg-color); padding: 12px 15px; border-radius: 6px; margin-bottom: 8px; color: var(--text-secondary); border: 1px solid var(--border-color); transition: background-color 0.3s; }
         .queue-list li:last-child { margin-bottom: 0; }
         .queue-list li.empty-queue { text-align: center; font-style: italic; color: var(--text-secondary); border: 1px dashed var(--border-color); }
-        .loading-indicator { font-size: 1.1rem; color: var(--accent-color); padding: 15px 0; text-align: center; display: none; }
+        .loading-indicator {
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+            padding: 5px 0;
+            text-align: center;
+            position: absolute;
+            bottom: 5px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: auto;
+            background-color: rgba(var(--card-bg-color-rgb, 255, 255, 255), 0.8);
+            border-radius: 4px;
+            display: none;
+        }
+        html[data-theme="light"] { --card-bg-color-rgb: 255, 255, 255; }
+        html[data-theme="dark"] { --card-bg-color-rgb: 40, 44, 52; }
         .footer { margin-top: 30px; text-align: center; font-size: 0.9rem; color: var(--text-secondary); }
     </style>
 </head>
@@ -48,7 +64,10 @@
     <div class="dashboard-container">
         <header>
             <h1>
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M17,18H7V16H17ZM19.35,10.04C18.67,6.59 15.64,4 12,4C9.11,4 6.6,5.64 5.35,8.04C2.34,8.36 0,10.91 0,14A5,5 0 0,0 5,19H9V15H15V19H19A3,3 0 0,0 22,16C22,12.62 19.95,10.26 19.35,10.04Z" /></svg>
+                <!-- MODIFIED: New SVG for yellow charging icon -->
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FFEB3B">
+                    <path d="M11 21h-1l1-7H7l6-12h1l-1 7h4l-6 12z"/>
+                </svg>
                 EV Charger Status
             </h1>
             <button class="theme-toggle" id="themeToggle">🌓 Theme</button>
@@ -76,7 +95,8 @@
     </div>
 
     <script>
-        const REFRESH_INTERVAL_MS = 3000; // Refresh every 3 seconds
+        const REFRESH_INTERVAL_MS = 3000;
+        const LOADING_INDICATOR_DELAY_MS = 300;
 
         const themeToggleButton = document.getElementById('themeToggle');
         const statusCardEl = document.getElementById('statusCard');
@@ -87,6 +107,8 @@
         const queueListEl = document.getElementById('queueList');
         const lastUpdatedEl = document.getElementById('lastUpdated');
         const loadingIndicatorEl = document.getElementById('loadingIndicator');
+
+        let loadingTimerId = null;
 
         function initializeTheme() {
             const preferredTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -116,9 +138,19 @@
         }
 
         async function updateDashboard() {
-            try {
+            if (loadingTimerId) {
+                clearTimeout(loadingTimerId);
+            }
+            loadingTimerId = setTimeout(() => {
                 loadingIndicatorEl.style.display = 'block';
+            }, LOADING_INDICATOR_DELAY_MS);
+
+            try {
                 const response = await fetch('/status');
+                clearTimeout(loadingTimerId);
+                loadingTimerId = null;
+                loadingIndicatorEl.style.display = 'none';
+
                 if (!response.ok) {
                     throw new Error(`Network error: ${response.status} ${response.statusText}`);
                 }
@@ -126,9 +158,8 @@
 
                 let newStatusClass = '';
                 let currentIcon = '🔌';
-                statusUserEl.style.display = 'none'; // Hide by default
-                statusTimeEl.style.display = 'none'; // Hide by default
-
+                statusUserEl.style.display = 'none';
+                statusTimeEl.style.display = 'none';
 
                 if (data.current_user_id) {
                     updateTextContent(statusUserEl, `User: ${data.current_user_name || data.current_user_id}`);
@@ -136,38 +167,36 @@
 
                     if (data.is_in_grace_period) {
                         newStatusClass = 'grace';
-                        currentIcon = '⏳'; // Hourglass
+                        currentIcon = '⏳';
                         updateTextContent(statusTitleEl, 'Grace Period');
                         updateTextContent(statusTimeEl, formatTime(data.grace_period_remaining_seconds));
                         statusTimeEl.style.display = 'block';
                     } else if (data.is_charging) {
                         newStatusClass = 'charging';
-                        currentIcon = '⚡️'; // Lightning bolt
+                        currentIcon = '⚡️';
                         updateTextContent(statusTitleEl, 'Charging Now');
                         updateTextContent(statusTimeEl, formatTime(data.charge_session_remaining_seconds));
                         statusTimeEl.style.display = 'block';
                     } else {
-                        // User is assigned, but not in grace and not charging (e.g., session just ended, state is transitional)
-                        newStatusClass = 'available'; // Or a specific "ended" state
-                        currentIcon = '✅'; // Checkmark
+                        newStatusClass = 'available';
+                        currentIcon = '✅';
                         updateTextContent(statusTitleEl, 'Charger Free');
                         updateTextContent(statusUserEl, `Last user: ${data.current_user_name || data.current_user_id}`);
                         updateTextContent(statusTimeEl, "Ready for next user");
                         statusTimeEl.style.display = 'block';
-                        // console.warn("Dashboard: current_user_id set, but not in grace/charging. Data:", data);
                     }
-                } else { // No current user, charger is available
+                } else {
                     newStatusClass = 'available';
-                    currentIcon = '✅'; // Checkmark
+                    currentIcon = '✅';
                     updateTextContent(statusTitleEl, 'Charger Available');
                     updateTextContent(statusUserEl, 'No active user');
-                    statusUserEl.style.display = 'block'; // Show "No active user"
+                    statusUserEl.style.display = 'block';
                     updateTextContent(statusTimeEl, 'Plug in to start');
                     statusTimeEl.style.display = 'block';
                 }
 
                 updateTextContent(statusIconEl, currentIcon);
-                statusCardEl.className = 'status-card'; // Reset classes then add new one
+                statusCardEl.className = 'status-card';
                 statusCardEl.classList.add(newStatusClass);
 
                 if (data.queue && data.queue.length > 0) {
@@ -180,6 +209,12 @@
                 updateTextContent(lastUpdatedEl, `Last updated: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
             } catch (error) {
                 console.error('Error updating dashboard:', error);
+                if (loadingTimerId) {
+                    clearTimeout(loadingTimerId);
+                    loadingTimerId = null;
+                }
+                loadingIndicatorEl.style.display = 'none';
+
                 statusCardEl.className = 'status-card error';
                 updateTextContent(statusIconEl, '⚠️');
                 updateTextContent(statusTitleEl, 'Error Updating');
@@ -188,12 +223,10 @@
                 updateTextContent(statusTimeEl, error.message.substring(0, 60));
                 statusTimeEl.style.display = 'block';
                 queueListEl.innerHTML = '<li class="empty-queue">Failed to load queue</li>';
-            } finally {
-                loadingIndicatorEl.style.display = 'none';
             }
         }
 
-        updateDashboard(); // Initial call
+        updateDashboard();
         setInterval(updateDashboard, REFRESH_INTERVAL_MS);
     </script>
 </body>
