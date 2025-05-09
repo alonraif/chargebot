@@ -317,7 +317,23 @@
 
                 // --- Update Status Card ---
                 console.log("Raw current_user_id from server:", data.current_user_id);
-                let userText = data.current_user_id ? `User: <${data.current_user_id}>` : "No active user";
+                if (data.current_user_id) {
+  // Fetch the display name from the backend API
+  fetch(`/slack/username?user_id=${data.current_user_id}`)
+    .then(response => response.json())
+    .then(userData => {
+      // If display name is available, use it, otherwise fallback to real_name
+      let userText = `User: ${userData.display_name || userData.real_name || data.current_user_id}`;
+      updateText(statusUserEl, userText); // Update the user element
+    })
+    .catch(err => {
+      console.error("Failed to fetch Slack username:", err);
+      updateText(statusUserEl, `User: ${data.current_user_id}`); // Fallback to user ID in case of error
+    });
+} else {
+  updateText(statusUserEl, "No active user");
+}
+
                 let currentStatusClass = statusCardEl.className;
                 let newStatusClass = '';
 

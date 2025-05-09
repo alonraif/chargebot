@@ -257,6 +257,28 @@ def _start_next_user_session_from_queue_internal():
 # ------------------------
 # Slack Commands
 # ------------------------
+app.get('/slack/username', async (req, res) => {
+  const userId = req.query.user_id;
+  const token = process.env.SLACK_BOT_TOKEN;
+
+  try {
+    const slackRes = await fetch(`https://slack.com/api/users.info?user=${userId}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    const data = await slackRes.json();
+
+    if (data.ok) {
+      res.json({ display_name: data.user.profile.display_name || data.user.real_name });
+    } else {
+      res.status(500).json({ error: data.error });
+    }
+  } catch (err) {
+    res.status(500).json({ error: 'Failed to fetch Slack user info' });
+  }
+});
+
 
 @app.command("/checkin")
 def checkin_command(ack, body, say):
