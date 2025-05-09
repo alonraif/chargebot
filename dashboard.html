@@ -4,7 +4,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>EV Charger Dashboard</title>
+    <!-- ADD THIS LINE FOR THE FAVICON -->
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='%23FFEB3B'><path d='M11 21h-1l1-7H7l6-12h1l-1 7h4l-6 12z'/></svg>">
     <style>
+        /* ... your existing CSS ... */
         :root {
             --font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif, "Apple Color Emoji", "Segoe UI Emoji";
             --bg-light: #f4f7f9; --card-bg-light: #ffffff; --text-primary-light: #2c3e50; --text-secondary-light: #7f8c8d; --accent-color-light: #3498db; --green-light: #2ecc71; --orange-light: #e67e22; --red-light: #e74c3c; --border-light: #e0e0e0;
@@ -21,8 +24,7 @@
         @keyframes containerFadeIn { from { opacity: 0; transform: translateY(15px); } to { opacity: 1; transform: translateY(0); } }
         header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 25px; border-bottom: 1px solid var(--border-color); padding-bottom: 15px; }
         header h1 { font-size: 1.8rem; font-weight: 600; margin: 0; display: flex; align-items: center; gap: 10px; color: var(--text-primary); }
-        /* MODIFIED: Removed 'fill' property from here to allow SVG's own fill attribute to work */
-        header h1 svg { width: 30px; height: 30px; /* fill: var(--accent-color); */ }
+        header h1 svg { width: 30px; height: 30px; }
         .theme-toggle { background: transparent; border: 1px solid var(--border-color); color: var(--text-secondary); padding: 8px 12px; border-radius: 6px; cursor: pointer; transition: background-color 0.2s, color 0.2s, border-color 0.2s; }
         .theme-toggle:hover { background-color: var(--accent-color); color: var(--status-text-color); border-color: var(--accent-color); }
         .status-section { margin-bottom: 30px; }
@@ -32,28 +34,22 @@
         .status-card.grace { background-color: var(--status-grace-bg); }
         .status-card.charging { background-color: var(--status-charging-bg); }
         .status-card.error { background-color: var(--error-bg); }
-        .status-card .status-icon { font-size: 2.8rem; margin-bottom: 12px; }
-        .status-card .status-title { font-size: 1.4rem; font-weight: 600; margin-bottom: 8px; }
-        .status-card .status-user, .status-card .status-time { font-size: 1.1rem; margin-bottom: 5px; }
-        .status-card .status-time { font-weight: 500; }
+        .status-card .status-icon { font-size: 2.8rem; margin-bottom: 10px; }
+        .status-card .status-title { font-size: 1.4rem; font-weight: 600; margin-bottom: 6px; }
+        .status-card .status-user { font-size: 1.1rem; margin-bottom: 4px; }
+        .status-card .status-time { font-size: 1.1rem; font-weight: 500; margin-bottom: 4px; }
+        .status-card .status-detail { font-size: 0.9rem; opacity: 0.9; margin-top: 2px; }
+
         .queue-section h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 15px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
         .queue-list { list-style: none; padding: 0; margin: 0; }
         .queue-list li { background-color: var(--bg-color); padding: 12px 15px; border-radius: 6px; margin-bottom: 8px; color: var(--text-secondary); border: 1px solid var(--border-color); transition: background-color 0.3s; }
         .queue-list li:last-child { margin-bottom: 0; }
         .queue-list li.empty-queue { text-align: center; font-style: italic; color: var(--text-secondary); border: 1px dashed var(--border-color); }
         .loading-indicator {
-            font-size: 0.9rem;
-            color: var(--text-secondary);
-            padding: 5px 0;
-            text-align: center;
-            position: absolute;
-            bottom: 5px;
-            left: 50%;
-            transform: translateX(-50%);
-            width: auto;
-            background-color: rgba(var(--card-bg-color-rgb, 255, 255, 255), 0.8);
-            border-radius: 4px;
-            display: none;
+            font-size: 0.9rem; color: var(--text-secondary); padding: 5px 0; text-align: center;
+            position: absolute; bottom: 5px; left: 50%; transform: translateX(-50%);
+            width: auto; background-color: rgba(var(--card-bg-color-rgb, 255, 255, 255), 0.8);
+            border-radius: 4px; display: none;
         }
         html[data-theme="light"] { --card-bg-color-rgb: 255, 255, 255; }
         html[data-theme="dark"] { --card-bg-color-rgb: 40, 44, 52; }
@@ -61,10 +57,10 @@
     </style>
 </head>
 <body>
+    <!-- ... rest of your HTML body ... -->
     <div class="dashboard-container">
         <header>
             <h1>
-                <!-- MODIFIED: New SVG for yellow charging icon -->
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="#FFEB3B">
                     <path d="M11 21h-1l1-7H7l6-12h1l-1 7h4l-6 12z"/>
                 </svg>
@@ -79,6 +75,7 @@
                     <div class="status-title" id="statusTitle">Initializing...</div>
                     <div class="status-user" id="statusUser" style="display:none;"></div>
                     <div class="status-time" id="statusTime" style="display:none;"></div>
+                    <div class="status-detail" id="statusChargeEndTime" style="display:none;"></div>
                     <div id="loadingIndicator" class="loading-indicator">Fetching data...</div>
                 </div>
             </section>
@@ -95,7 +92,8 @@
     </div>
 
     <script>
-        const REFRESH_INTERVAL_MS = 3000;
+        const DATA_REFRESH_INTERVAL_MS = 3000;
+        const DISPLAY_REFRESH_INTERVAL_MS = 1000;
         const LOADING_INDICATOR_DELAY_MS = 300;
 
         const themeToggleButton = document.getElementById('themeToggle');
@@ -104,11 +102,13 @@
         const statusTitleEl = document.getElementById('statusTitle');
         const statusUserEl = document.getElementById('statusUser');
         const statusTimeEl = document.getElementById('statusTime');
+        const statusChargeEndTimeEl = document.getElementById('statusChargeEndTime');
         const queueListEl = document.getElementById('queueList');
         const lastUpdatedEl = document.getElementById('lastUpdated');
         const loadingIndicatorEl = document.getElementById('loadingIndicator');
 
         let loadingTimerId = null;
+        let lastFetchedData = null;
 
         function initializeTheme() {
             const preferredTheme = localStorage.getItem('theme') || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light');
@@ -129,15 +129,52 @@
             }
         }
 
-        function formatTime(seconds) {
-            if (seconds === null || typeof seconds === 'undefined' || seconds < 0) return "N/A";
+        function formatRemainingTime(seconds) {
+            if (seconds === null || typeof seconds === 'undefined' || seconds < 0) seconds = 0;
             if (seconds === 0) return "Ending soon...";
             const mins = Math.floor(seconds / 60);
-            const secs = seconds % 60;
+            const secs = Math.floor(seconds % 60);
             return `${String(mins).padStart(2, '0')}:${String(secs).padStart(2, '0')} remaining`;
         }
 
-        async function updateDashboard() {
+        function formatEndTime(unixTimestamp) {
+            if (!unixTimestamp) return "";
+            const date = new Date(unixTimestamp * 1000);
+            return `Ends at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
+        function updateDisplayedTimes() {
+            updateTextContent(lastUpdatedEl, `Last updated: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+
+            if (!lastFetchedData) {
+                statusTimeEl.style.display = 'none';
+                statusChargeEndTimeEl.style.display = 'none';
+                return;
+            }
+
+            statusTimeEl.style.display = 'block';
+            statusChargeEndTimeEl.style.display = 'none';
+
+            if (lastFetchedData.is_in_grace_period && lastFetchedData.grace_period_ends_at_unix) {
+                const nowUnix = Date.now() / 1000;
+                const graceRemaining = lastFetchedData.grace_period_ends_at_unix - nowUnix;
+                updateTextContent(statusTimeEl, formatRemainingTime(graceRemaining));
+            } else if (lastFetchedData.is_charging && lastFetchedData.charge_session_started_at_unix && lastFetchedData.charge_session_duration_seconds) {
+                const nowUnix = Date.now() / 1000;
+                const chargeEndTimeUnix = lastFetchedData.charge_session_started_at_unix + lastFetchedData.charge_session_duration_seconds;
+                const chargeRemaining = chargeEndTimeUnix - nowUnix;
+
+                updateTextContent(statusTimeEl, formatRemainingTime(chargeRemaining));
+                updateTextContent(statusChargeEndTimeEl, formatEndTime(chargeEndTimeUnix));
+                statusChargeEndTimeEl.style.display = 'block';
+            } else if (lastFetchedData.current_user_id) {
+                 updateTextContent(statusTimeEl, "Session complete");
+            } else {
+                updateTextContent(statusTimeEl, 'Plug in to start');
+            }
+        }
+
+        async function updateDashboardData() {
             if (loadingTimerId) {
                 clearTimeout(loadingTimerId);
             }
@@ -154,36 +191,30 @@
                 if (!response.ok) {
                     throw new Error(`Network error: ${response.status} ${response.statusText}`);
                 }
-                const data = await response.json();
+
+                lastFetchedData = await response.json();
 
                 let newStatusClass = '';
                 let currentIcon = '🔌';
                 statusUserEl.style.display = 'none';
-                statusTimeEl.style.display = 'none';
 
-                if (data.current_user_id) {
-                    updateTextContent(statusUserEl, `User: ${data.current_user_name || data.current_user_id}`);
+                if (lastFetchedData.current_user_id) {
+                    updateTextContent(statusUserEl, `User: ${lastFetchedData.current_user_name || lastFetchedData.current_user_id}`);
                     statusUserEl.style.display = 'block';
 
-                    if (data.is_in_grace_period) {
+                    if (lastFetchedData.is_in_grace_period) {
                         newStatusClass = 'grace';
                         currentIcon = '⏳';
                         updateTextContent(statusTitleEl, 'Grace Period');
-                        updateTextContent(statusTimeEl, formatTime(data.grace_period_remaining_seconds));
-                        statusTimeEl.style.display = 'block';
-                    } else if (data.is_charging) {
+                    } else if (lastFetchedData.is_charging) {
                         newStatusClass = 'charging';
                         currentIcon = '⚡️';
                         updateTextContent(statusTitleEl, 'Charging Now');
-                        updateTextContent(statusTimeEl, formatTime(data.charge_session_remaining_seconds));
-                        statusTimeEl.style.display = 'block';
                     } else {
                         newStatusClass = 'available';
                         currentIcon = '✅';
                         updateTextContent(statusTitleEl, 'Charger Free');
-                        updateTextContent(statusUserEl, `Last user: ${data.current_user_name || data.current_user_id}`);
-                        updateTextContent(statusTimeEl, "Ready for next user");
-                        statusTimeEl.style.display = 'block';
+                        updateTextContent(statusUserEl, `Last user: ${lastFetchedData.current_user_name || lastFetchedData.current_user_id}`);
                     }
                 } else {
                     newStatusClass = 'available';
@@ -191,29 +222,29 @@
                     updateTextContent(statusTitleEl, 'Charger Available');
                     updateTextContent(statusUserEl, 'No active user');
                     statusUserEl.style.display = 'block';
-                    updateTextContent(statusTimeEl, 'Plug in to start');
-                    statusTimeEl.style.display = 'block';
                 }
 
                 updateTextContent(statusIconEl, currentIcon);
                 statusCardEl.className = 'status-card';
                 statusCardEl.classList.add(newStatusClass);
 
-                if (data.queue && data.queue.length > 0) {
-                    queueListEl.innerHTML = data.queue.map((user, index) =>
+                if (lastFetchedData.queue && lastFetchedData.queue.length > 0) {
+                    queueListEl.innerHTML = lastFetchedData.queue.map((user, index) =>
                         `<li>${index + 1}. ${user.name || user.id}</li>`
                     ).join('');
                 } else {
                     queueListEl.innerHTML = '<li class="empty-queue">Queue is empty</li>';
                 }
-                updateTextContent(lastUpdatedEl, `Last updated: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
+                updateDisplayedTimes();
+
             } catch (error) {
-                console.error('Error updating dashboard:', error);
+                console.error('Error updating dashboard data:', error);
                 if (loadingTimerId) {
                     clearTimeout(loadingTimerId);
                     loadingTimerId = null;
                 }
                 loadingIndicatorEl.style.display = 'none';
+                lastFetchedData = null;
 
                 statusCardEl.className = 'status-card error';
                 updateTextContent(statusIconEl, '⚠️');
@@ -222,12 +253,13 @@
                 statusUserEl.style.display = 'block';
                 updateTextContent(statusTimeEl, error.message.substring(0, 60));
                 statusTimeEl.style.display = 'block';
+                statusChargeEndTimeEl.style.display = 'none';
                 queueListEl.innerHTML = '<li class="empty-queue">Failed to load queue</li>';
             }
         }
-
-        updateDashboard();
-        setInterval(updateDashboard, REFRESH_INTERVAL_MS);
+        updateDashboardData();
+        setInterval(updateDashboardData, DATA_REFRESH_INTERVAL_MS);
+        setInterval(updateDisplayedTimes, DISPLAY_REFRESH_INTERVAL_MS);
     </script>
 </body>
 </html>
