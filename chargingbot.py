@@ -5,6 +5,7 @@ import json
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
+import urllib.parse
 import logging
 
 # Setup basic logging
@@ -65,8 +66,6 @@ def format_time_remaining_for_status_display(current_user_id_in_state, grace_end
             prefix = "Charging:"
             if seconds <= 0: return "Charging session ending now"
         else:
-            # This case should ideally not be reached if a user is set.
-            # Could happen briefly during state transitions if status is checked at an unlucky moment.
             logging.warning(
                 f"Inconsistent state for user {current_user_id_in_state} in format_time_remaining_for_status_display.")
             return "Time status unavailable (transitional state)"
@@ -103,58 +102,88 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
     try:
         # 1. Grace Period Handling
         if grace_duration > 0:
-            # The grace_period_end_time was set in charging_state by the caller
-            # We wait until this time, or until a stop signal is received
-            wait_until_grace_end_time = time.time() + grace_duration  # Recalculate based on when thread actually starts
+            authoritative_grace_end_time = None
+            with state_lock:
+                # Check if session is still valid and retrieve the authoritative grace_period_end_time
+                if charging_state["current_user_id"] == user_id and \
+                        charging_state["active_session_stop_event"] == stop_event and \
+                        charging_state["grace_period_end_time"] is not None:
+                    authoritative_grace_end_time = charging_state["grace_period_end_time"]
+                else:
+                    logging.info(
+                        f"[{current_thread_name}] Session for {user_id} is no longer active or grace_period_end_time not set before grace wait. Thread exiting.")
+                    return
 
-            while time.time() < wait_until_grace_end_time and not stop_event.is_set():
-                time_to_wait = min(1, wait_until_grace_end_time - time.time())
-                if time_to_wait <= 0: break
-                stop_event.wait(timeout=time_to_wait)  # Check frequently
+            logging.info(
+                f"[{current_thread_name}] User {user_id} entering grace period wait. Scheduled end: {time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(authoritative_grace_end_time))}.")
+
+            while time.time() < authoritative_grace_end_time and not stop_event.is_set():
+                time_to_wait_for_event = min(1.0, authoritative_grace_end_time - time.time())
+                if time_to_wait_for_event <= 0:  # Should be caught by outer loop, but defensive
+                    break
+                stop_event.wait(timeout=time_to_wait_for_event)  # Check frequently
 
             if stop_event.is_set():
                 logging.info(
                     f"[{current_thread_name}] Session for {user_id} stopped during grace period by external event.")
-                return  # Session was ended early (e.g., by /endcharge)
+                return
 
-            # Grace period finished naturally
+            # Grace period finished naturally. Now, transition to actual charging.
+            # Lock is needed to modify shared state and re-verify authority.
             with state_lock:
-                # Verify this thread is still authoritative for this user
+                if charging_state["current_user_id"] != user_id or \
+                        charging_state["active_session_stop_event"] != stop_event:
+                    logging.info(
+                        f"[{current_thread_name}] Session for {user_id} was taken over or cleared during grace period wait. Actual charge will not start. Thread exiting.")
+                    return
+
+                # Defensive check, though loop condition should ensure this
+                if time.time() < authoritative_grace_end_time:
+                    logging.warning(
+                        f"[{current_thread_name}] Exited grace wait for {user_id} but time {time.time():.2f} is still before target {authoritative_grace_end_time:.2f}. Proceeding with caution.")
+
+                charging_state["session_actual_charge_start_time"] = time.time()
+                charging_state["grace_period_end_time"] = None  # Grace period is over
+                logging.info(
+                    f"[{current_thread_name}] User {user_id} grace period ended. Actual charge started at {charging_state['session_actual_charge_start_time']:.2f}.")
+            safe_post_message(app.client, channel=user_id, text="⏱️ Your 90-minute charging session has started.")
+        else:  # No grace period was configured (currently all paths have grace for new sessions)
+            with state_lock:
+                # Verify this thread is still authoritative
                 if charging_state["current_user_id"] != user_id or charging_state[
                     "active_session_stop_event"] != stop_event:
                     logging.info(
-                        f"[{current_thread_name}] Session for {user_id} was taken over or cleared during grace. Thread exiting.")
+                        f"[{current_thread_name}] Session for {user_id} (no grace) changed before actual start. Thread exiting.")
                     return
-
-                charging_state["session_actual_charge_start_time"] = time.time()  # Actual charge starts NOW
-                charging_state["grace_period_end_time"] = None  # Grace period is over
+                # If _start_user_session_flow_internal set this for no_grace, this is redundant but harmless.
+                # If it didn't, this is where it's set.
+                if charging_state["session_actual_charge_start_time"] is None:  # Only set if not already set by caller
+                    charging_state["session_actual_charge_start_time"] = time.time()
+                charging_state["grace_period_end_time"] = None  # Ensure it's None
                 logging.info(
-                    f"[{current_thread_name}] User {user_id} grace period ended. Actual charge started at {charging_state['session_actual_charge_start_time']}.")
-            safe_post_message(app.client, channel=user_id, text="⏱️ Your 90-minute charging session has started.")
-        else:  # No grace period was configured (currently all paths have grace)
-            with state_lock:
-                if charging_state["current_user_id"] != user_id or charging_state[
-                    "active_session_stop_event"] != stop_event: return
-                charging_state["session_actual_charge_start_time"] = time.time()
-                charging_state["grace_period_end_time"] = None
+                    f"[{current_thread_name}] User {user_id} starting charge (no grace) at {charging_state['session_actual_charge_start_time']:.2f}.")
+
             safe_post_message(app.client, channel=user_id,
                               text="⏱️ Your 90-minute charging session has started (no grace period).")
 
         # 2. Charging Period Handling
-        # Read actual_charge_start_time once under lock for calculations
+        actual_charge_start_time_for_calc = None
         with state_lock:
-            actual_charge_start_time = charging_state["session_actual_charge_start_time"]
-            if not actual_charge_start_time or charging_state["current_user_id"] != user_id:
+            # Re-read actual_charge_start_time, ensure session still valid
+            if charging_state["current_user_id"] != user_id or \
+                    charging_state["active_session_stop_event"] != stop_event or \
+                    charging_state["session_actual_charge_start_time"] is None:
                 logging.warning(
-                    f"[{current_thread_name}] User {user_id} charging period: inconsistent state (no start time or user changed). Exiting.")
+                    f"[{current_thread_name}] User {user_id} charging period: inconsistent state or session ended. Exiting.")
                 return
+            actual_charge_start_time_for_calc = charging_state["session_actual_charge_start_time"]
 
-        # Wait for 10-minute warning time
-        warning_notification_time = actual_charge_start_time + (charge_duration - TEN_MINUTE_WARNING_BEFORE_END)
+        warning_notification_time = actual_charge_start_time_for_calc + (
+                    charge_duration - TEN_MINUTE_WARNING_BEFORE_END)
         sleep_duration_to_warning = warning_notification_time - time.time()
 
         if sleep_duration_to_warning > 0:
-            stop_event.wait(timeout=sleep_duration_to_warning)  # Wait, but wake up if event is set
+            stop_event.wait(timeout=sleep_duration_to_warning)
 
         if stop_event.is_set():
             logging.info(f"[{current_thread_name}] Session for {user_id} stopped before 10-min warning could be sent.")
@@ -162,37 +191,36 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
 
         # Send 10-minute warning if still the active session
         with state_lock:
-            if charging_state["current_user_id"] == user_id and charging_state[
-                "active_session_stop_event"] == stop_event:
+            if charging_state["current_user_id"] == user_id and \
+                    charging_state["active_session_stop_event"] == stop_event:
                 logging.info(f"[{current_thread_name}] Sending 10-min warning to {user_id}.")
                 safe_post_message(app.client, channel=user_id, text="⏳ 10 minutes left in your charging session.")
-            else:  # Session ended or changed before warning
+            else:
                 logging.info(
                     f"[{current_thread_name}] Session for {user_id} changed before 10-min warning. Thread exiting.")
                 return
 
-        # Wait for session end
-        session_should_end_time = actual_charge_start_time + charge_duration
+        session_should_end_time = actual_charge_start_time_for_calc + charge_duration
         sleep_duration_to_end = session_should_end_time - time.time()
 
         if sleep_duration_to_end > 0:
             stop_event.wait(timeout=sleep_duration_to_end)
 
-        if stop_event.is_set():  # Session ended early by /endcharge
+        if stop_event.is_set():
             logging.info(f"[{current_thread_name}] Session for {user_id} stopped before natural end via stop_event.")
             return
 
         # Natural session end
         next_user_notified_from_thread = None
         with state_lock:
-            if charging_state["current_user_id"] == user_id and charging_state[
-                "active_session_stop_event"] == stop_event:
+            if charging_state["current_user_id"] == user_id and \
+                    charging_state["active_session_stop_event"] == stop_event:
                 logging.info(f"[{current_thread_name}] Session for {user_id} ended naturally.")
                 safe_post_message(app.client, channel=user_id,
                                   text="⚠️ Your charging session has ended. Please disconnect your car.")
-                _clear_current_session_internal()  # Clear this user's session details
-                next_user_notified_from_thread = _start_next_user_session_from_queue_internal()  # Attempt to start next
-            else:  # Session changed/cleared by other means just before natural end
+                _clear_current_session_internal()
+                next_user_notified_from_thread = _start_next_user_session_from_queue_internal()
+            else:
                 logging.info(
                     f"[{current_thread_name}] Session for {user_id} changed just before natural end. Thread exiting.")
                 return
@@ -207,6 +235,17 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
         logging.error(
             f"[{current_thread_name}] Unexpected error in _session_management_thread_target for {user_id}: {e}",
             exc_info=True)
+        # Consider additional cleanup or notification if thread dies unexpectedly
+        # For example, ensure the session is marked as problematic or cleared.
+        with state_lock:
+            if charging_state.get("current_user_id") == user_id and charging_state.get(
+                    "active_session_stop_event") == stop_event:
+                logging.error(
+                    f"[{current_thread_name}] Attempting to clear session for {user_id} due to unexpected error.")
+                _clear_current_session_internal()
+                # Potentially try to start next user, or just leave charger as "available"
+                # next_user = _start_next_user_session_from_queue_internal()
+                # if next_user: safe_post_message(...) etc.
 
 
 def _start_user_session_flow_internal(user_id, has_grace_period):
@@ -214,8 +253,17 @@ def _start_user_session_flow_internal(user_id, has_grace_period):
     Sets up state for a new user session and starts the management thread.
     MUST be called with state_lock held.
     """
+    # If there's an existing session for another user, it should have been cleared before calling this.
+    # If this user already has a session, this might be a re-entry; ensure old event is handled if necessary.
+    # However, current command logic prevents this by checking current_user_id.
+    if charging_state["active_session_stop_event"]:
+        logging.warning(
+            f"New session flow for {user_id} starting, but an active_session_stop_event already exists. Signaling old event.")
+        charging_state["active_session_stop_event"].set()  # Ensure any lingering thread is stopped
+
     charging_state["current_user_id"] = user_id
-    charging_state["active_session_stop_event"] = threading.Event()
+    new_stop_event = threading.Event()
+    charging_state["active_session_stop_event"] = new_stop_event
 
     grace_to_pass = GRACE_PERIOD if has_grace_period else 0
     if has_grace_period:
@@ -226,14 +274,12 @@ def _start_user_session_flow_internal(user_id, has_grace_period):
         charging_state["session_actual_charge_start_time"] = time.time()  # Starts immediately
 
     logging.info(
-        f"Starting session flow for {user_id}. Grace: {has_grace_period}. Grace ends: {charging_state['grace_period_end_time']}.")
-
-    session_event_for_thread = charging_state["active_session_stop_event"]  # Get ref before any potential unlock
+        f"Starting session flow for {user_id}. Grace: {has_grace_period}. Grace ends: {charging_state['grace_period_end_time']}. Actual start: {charging_state['session_actual_charge_start_time']}.")
 
     thread = threading.Thread(
         target=_session_management_thread_target,
-        args=(user_id, grace_to_pass, CHARGE_DURATION, session_event_for_thread),
-        daemon=True  # Allows main program to exit even if threads are running
+        args=(user_id, grace_to_pass, CHARGE_DURATION, new_stop_event),  # Pass the new_stop_event
+        daemon=True
     )
     thread.start()
 
@@ -249,43 +295,63 @@ def _start_next_user_session_from_queue_internal():
         return None
 
     next_user_id = charging_state["queue"].pop(0)
+    # Clear any remnants of a previous session for safety, though _clear_current_session_internal should handle.
+    # This function (_start_user_session_flow_internal) will set up the new session.
     _start_user_session_flow_internal(next_user_id, has_grace_period=True)
     logging.info(f"Promoted {next_user_id} from queue to active session with grace period.")
     return next_user_id
 
 
+# --- User info caching and fetching ---
+user_info_cache = {}  # Simple dict cache: {"U123": {"name": "User A", "timestamp": time.time()}}
+CACHE_TTL_SECONDS = 15 * 60  # Cache user info for 15 minutes
+
+
+def get_user_display_name(user_id, slack_client):
+    if not user_id:
+        return "Unknown User"
+
+    now = time.time()
+    cached_entry = user_info_cache.get(user_id)
+    if cached_entry and (now - cached_entry["timestamp"] < CACHE_TTL_SECONDS):
+        return cached_entry["name"]
+
+    try:
+        user_info_response = slack_client.users_info(user=user_id)
+        if user_info_response and user_info_response["ok"]:
+            user_data = user_info_response["user"]
+            display_name = user_data.get("profile", {}).get("display_name", "")
+            real_name = user_data.get("real_name", "")
+            name_to_return = display_name if display_name else real_name
+            if not name_to_return: name_to_return = user_id  # Fallback to ID if no name found
+
+            user_info_cache[user_id] = {"name": name_to_return, "timestamp": now}
+            return name_to_return
+        else:
+            logging.warning(
+                f"Slack API error for users.info (user: {user_id}) in get_user_display_name: {user_info_response.get('error', 'Unknown error') if user_info_response else 'Empty response'}")
+            # Cache failure for a shorter period to avoid hammering on persistent errors
+            user_info_cache[user_id] = {"name": user_id, "timestamp": now}
+            return user_id  # Fallback to user_id
+    except Exception as e:
+        logging.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
+        user_info_cache[user_id] = {"name": user_id, "timestamp": now}
+        return user_id  # Fallback to user_id
+
+
+# --- End of user info caching section ---
+
 # ------------------------
 # Slack Commands
 # ------------------------
-app.get('/slack/username', async (req, res) => {
-  const userId = req.query.user_id;
-  const token = process.env.SLACK_BOT_TOKEN;
-
-  try {
-    const slackRes = await fetch(`https://slack.com/api/users.info?user=${userId}`, {
-      headers: {
-        'Authorization': `Bearer ${token}`
-      }
-    });
-    const data = await slackRes.json();
-
-    if (data.ok) {
-      res.json({ display_name: data.user.profile.display_name || data.user.real_name });
-    } else {
-      res.status(500).json({ error: data.error });
-    }
-  } catch (err) {
-    res.status(500).json({ error: 'Failed to fetch Slack user info' });
-  }
-});
-
+# The JavaScript block app.get('/slack/username', ...) was removed as it's not valid Python.
+# If username fetching is needed, use app.client.users_info within Python functions.
 
 @app.command("/checkin")
 def checkin_command(ack, body, say):
-    """Starts a charging session (with grace period) if charger is free."""
     ack()
     user_id = body["user_id"]
-    user_name = body.get("user_name", user_id)
+    user_name = body.get("user_name", user_id)  # For logging
 
     with state_lock:
         if charging_state["current_user_id"] == user_id:
@@ -293,23 +359,21 @@ def checkin_command(ack, body, say):
             return
 
         if charging_state["current_user_id"] is not None:
-            say(f"<@{user_id}>, <@{charging_state['current_user_id']}> is currently using or has reserved the charger. Use `/request` to join the queue.")
+            active_user = charging_state["current_user_id"]
+            say(f"<@{user_id}>, <@{active_user}> is currently using or has reserved the charger. Use `/request` to join the queue.")
             return
 
-        # Charger is free
         logging.info(f"/checkin by {user_name} ({user_id}). Charger free. Starting session with grace.")
         _start_user_session_flow_internal(user_id, has_grace_period=True)
 
-    # Message sent outside lock
     say(f"<@{user_id}>, you've checked in. 🔌 The charger is now reserved for you. Please plug in within {int(GRACE_PERIOD / 60)} minutes to start your charging session.")
 
 
 @app.command("/request")
 def request_command(ack, body, say):
-    """Adds user to queue, or starts charging (with grace) if charger is free."""
     ack()
     user_id = body["user_id"]
-    user_name = body.get("user_name", user_id)
+    user_name = body.get("user_name", user_id)  # For logging
     message_to_send = ""
 
     with state_lock:
@@ -318,18 +382,14 @@ def request_command(ack, body, say):
         elif user_id in charging_state["queue"]:
             message_to_send = f"<@{user_id}>, you are already in the queue."
         elif charging_state["current_user_id"] is None:
-            # Charger is free, start session directly
             logging.info(f"/request by {user_name} ({user_id}). Charger free. Starting session with grace.")
             _start_user_session_flow_internal(user_id, has_grace_period=True)
             message_to_send = f"🟢 Charging queue was empty. <@{user_id}>, the charger is now reserved for you. Please plug in within {int(GRACE_PERIOD / 60)} minutes."
         else:
-            # Charger is busy, add to queue
-            logging.info(f"/request: Attempting to add user_id='{user_id}' (type: {type(user_id)}) to queue.")
-            # Ensure user_id is a non-empty string, though Slack usually guarantees this for body["user_id"]
-            if not user_id or not isinstance(user_id, str):
+            if not user_id or not isinstance(user_id, str):  # Defensive check
                 logging.error(f"/request: Invalid user_id '{user_id}' received. Not adding to queue.")
                 say(f"Sorry, <@{body['user_id']}>, there was an issue with your request (invalid user identifier). Please try again.")
-                return  # Or handle error appropriately
+                return
             charging_state["queue"].append(user_id)
             position = len(charging_state["queue"])
             logging.info(f"/request by {user_name} ({user_id}). Added to queue at position {position}.")
@@ -341,10 +401,9 @@ def request_command(ack, body, say):
 
 @app.command("/endcharge")
 def endcharge_command(ack, body, say):
-    """Ends the current user's charging session early."""
     ack()
     user_id = body["user_id"]
-    user_name = body.get("user_name", user_id)
+    user_name = body.get("user_name", user_id)  # For logging
 
     ended_early_msg = ""
     next_user_to_notify_id = None
@@ -356,11 +415,11 @@ def endcharge_command(ack, body, say):
 
         logging.info(f"/endcharge by {user_name} ({user_id}). Ending their session early.")
         _clear_current_session_internal()  # Stops thread, clears current user state
-        ended_early_msg = f"<@{user_id}> has ended their charging session early."
+        ended_early_msg = f"<@{user_id}> has ended their charging session early."  # Corrected to use user_id
 
         next_user_to_notify_id = _start_next_user_session_from_queue_internal()
 
-    say(ended_early_msg)  # Announce the end of the previous session
+    say(ended_early_msg)
     if next_user_to_notify_id:
         logging.info(f"Notifying next user {next_user_to_notify_id} (after /endcharge).")
         safe_post_message(app.client, channel=next_user_to_notify_id,
@@ -369,10 +428,9 @@ def endcharge_command(ack, body, say):
 
 @app.command("/exitqueue")
 def exitqueue_command(ack, body, say):
-    """Removes the user from the queue."""
     ack()
     user_id = body["user_id"]
-    user_name = body.get("user_name", user_id)
+    user_name = body.get("user_name", user_id)  # For logging
 
     with state_lock:
         if user_id in charging_state["queue"]:
@@ -385,15 +443,13 @@ def exitqueue_command(ack, body, say):
 
 @app.command("/chargestatus")
 def chargestatus_command(ack, body, say):
-    """Displays the current charger and queue status."""
     ack()
     msg_parts = []
-    # Read state under lock and make copies to release lock quickly
     with state_lock:
         current_id_copy = charging_state["current_user_id"]
         grace_time_copy = charging_state["grace_period_end_time"]
         charge_start_time_copy = charging_state["session_actual_charge_start_time"]
-        queue_list_copy = list(charging_state["queue"])
+        queue_list_copy = list(charging_state["queue"])  # Create a copy for safe iteration
 
     if current_id_copy:
         time_status_str = format_time_remaining_for_status_display(current_id_copy, grace_time_copy,
@@ -428,40 +484,61 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
             with state_lock:  # Access state safely
                 now = time.time()
-                is_in_grace = charging_state["grace_period_end_time"] is not None and now < charging_state[
-                    "grace_period_end_time"]
 
-                grace_remaining_s = None
-                if is_in_grace:
+                current_user_name_display = "N/A"
+                if charging_state["current_user_id"]:
+                    # Pass app.client to the function
+                    current_user_name_display = get_user_display_name(charging_state["current_user_id"], app.client)
+
+                is_in_grace = False
+                grace_remaining_s = 0  # Default to 0
+                if charging_state["grace_period_end_time"] is not None and now < charging_state[
+                    "grace_period_end_time"]:
+                    is_in_grace = True
                     grace_remaining_s = int(charging_state['grace_period_end_time'] - now)
 
-                charge_remaining_s = None
+                is_currently_charging = False
+                charge_remaining_s = 0  # Default to 0
                 if not is_in_grace and charging_state["session_actual_charge_start_time"]:
-                    charge_end = charging_state["session_actual_charge_start_time"] + CHARGE_DURATION
-                    if now < charge_end:
-                        charge_remaining_s = int(charge_end - now)
+                    charge_end_time = charging_state["session_actual_charge_start_time"] + CHARGE_DURATION
+                    if now < charge_end_time:
+                        is_currently_charging = True
+                        charge_remaining_s = int(charge_end_time - now)
+                    # else: charge already ended, remaining is 0
+
+                queue_with_names = []
+                for uid_in_queue in charging_state["queue"]:
+                    queue_with_names.append({
+                        "id": uid_in_queue,
+                        "name": get_user_display_name(uid_in_queue, app.client)  # Pass app.client
+                    })
 
                 state_for_json = {
                     "current_user_id": charging_state["current_user_id"],
+                    "current_user_name": current_user_name_display,  # ADDED for display name
                     "is_in_grace_period": is_in_grace,
-                    "grace_period_ends_in_seconds": grace_remaining_s,
+                    "grace_period_ends_at_unix": charging_state["grace_period_end_time"],
+                    "grace_period_remaining_seconds": grace_remaining_s,
+                    "is_charging": is_currently_charging,  # ADDED for clarity
                     "charge_session_started_at_unix": charging_state["session_actual_charge_start_time"],
+                    "charge_session_duration_seconds": CHARGE_DURATION if charging_state[
+                        "session_actual_charge_start_time"] else None,
                     "charge_session_remaining_seconds": charge_remaining_s,
-                    "queue": list(charging_state["queue"]),  # Send copy
+                    "queue": queue_with_names,  # MODIFIED to include names
                     "queue_length": len(charging_state["queue"])
                 }
             self.wfile.write(json.dumps(state_for_json, indent=2).encode())
+        # ... (rest of your /dashboard and 404 handler)
         elif self.path == "/dashboard":
             self.send_response(200)
             self.send_header("Content-type", "text/html")
             self.end_headers()
             try:
-                # Create a simple dashboard.html or point to a more complex one
-                with open("dashboard.html", "rb") as f:
+                with open("dashboard.html", "rb") as f:  # Assumes dashboard.html is in the same directory
                     self.wfile.write(f.read())
             except FileNotFoundError:
                 self.wfile.write(b"<html><body><h1>Dashboard</h1><p>dashboard.html not found.</p>"
-                                 b"<p>Create dashboard.html and refresh.</p>"
+                                 b"<p>Create dashboard.html and place it in the same directory as the bot script.</p>"
                                  b"<p><a href='/status'>View JSON Status</a></p></body></html>")
         else:
             self.send_response(404)
@@ -471,8 +548,7 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
 
 
 def start_http_server_func():
-    """Starts the local HTTP server for health checks."""
-    port = int(os.environ.get("PORT", 8080))  # For compatibility with services like Render
+    port = int(os.environ.get("PORT", 8080))
     server_address = ("0.0.0.0", port)
     httpd = HTTPServer(server_address, HealthCheckHandler)
     logging.info(f"Starting HTTP server on port {port}...")
@@ -480,6 +556,8 @@ def start_http_server_func():
         httpd.serve_forever()
     except Exception as e:
         logging.error(f"HTTP server failed: {e}", exc_info=True)
+        # If the HTTP server fails critically, it might be worth signaling the main app to shut down.
+        # However, as a daemon thread, its failure won't stop the main Slack bot thread directly.
 
 
 # ------------------------
@@ -488,17 +566,20 @@ def start_http_server_func():
 if __name__ == "__main__":
     logging.info("Starting EV Charging Bot...")
 
-    # Run HTTP server in a background daemon thread
     http_server_thread = threading.Thread(target=start_http_server_func, daemon=True)
     http_server_thread.start()
 
-    # Start Slack bot via Socket Mode Handler
     socket_mode_handler = SocketModeHandler(app, slack_app_token)
     try:
         logging.info("Connecting to Slack via Socket Mode...")
-        socket_mode_handler.start()
+        socket_mode_handler.start()  # This will block until the app stops
     except Exception as e:
         logging.critical(f"Failed to start SocketModeHandler: {e}", exc_info=True)
-        # Attempt to stop the HTTP server thread gracefully if possible, though it's a daemon
-        # os._exit(1) might be needed if threads don't stop main program exit
+        # Consider more robust shutdown if HTTP server also needs to be explicitly stopped
+        # httpd.shutdown() from another thread if httpd instance was accessible globally.
+        # For daemon threads, exit(1) will terminate them.
         exit(1)
+    finally:
+        logging.info("EV Charging Bot is shutting down.")
+        # If httpd had a shutdown method and was accessible, call it here.
+        # For daemon threads, they will be terminated when the main program exits.
