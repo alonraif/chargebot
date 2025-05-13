@@ -27,7 +27,7 @@ state_lock = threading.Lock()
 # Shared bot state
 charging_state = {
     "current_user_id": None,  # Slack user ID currently in grace or charging
-    "session_actual_charge_start_time": None,  # Timestamp when 90-min charge actually began
+    "session_actual_charge_start_time": None,  # Timestamp when 120-min charge actually began
     "grace_period_end_time": None,  # Timestamp when grace period for current_user_id ends
     "active_session_stop_event": None,  # threading.Event() for the current session's timer thread
     "queue": [],  # List of user IDs waiting
@@ -146,7 +146,7 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
                 charging_state["grace_period_end_time"] = None  # Grace period is over
                 logging.info(
                     f"[{current_thread_name}] User {user_id} grace period ended. Actual charge started at {charging_state['session_actual_charge_start_time']:.2f}.")
-            safe_post_message(app.client, channel=user_id, text="⏱️ Your 90-minute charging session has started.")
+            safe_post_message(app.client, channel=user_id, text="⏱️ Your 120-minute charging session has started.")
         else:  # No grace period was configured (currently all paths have grace for new sessions)
             with state_lock:
                 # Verify this thread is still authoritative
@@ -164,7 +164,7 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
                     f"[{current_thread_name}] User {user_id} starting charge (no grace) at {charging_state['session_actual_charge_start_time']:.2f}.")
 
             safe_post_message(app.client, channel=user_id,
-                              text="⏱️ Your 90-minute charging session has started (no grace period).")
+                              text="⏱️ Your 120-minute charging session has started (no grace period).")
 
         # 2. Charging Period Handling
         actual_charge_start_time_for_calc = None
