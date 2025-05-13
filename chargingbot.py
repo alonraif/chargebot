@@ -34,7 +34,7 @@ charging_state = {
 }
 
 # Configuration constants
-CHARGE_DURATION = 90 * 60  # 90 minutes in seconds
+CHARGE_DURATION = 120 * 60  # 120 minutes in seconds
 GRACE_PERIOD = 5 * 60  # 5 minutes in seconds
 TEN_MINUTE_WARNING_BEFORE_END = 10 * 60  # 10 minutes in seconds
 
