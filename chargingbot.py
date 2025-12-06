@@ -445,24 +445,53 @@ def exitqueue_command(ack, body, say):
 def chargestatus_command(ack, body, say):
     ack()
     msg_parts = []
+    now = time.time()
+
     with state_lock:
         current_id_copy = charging_state["current_user_id"]
         grace_time_copy = charging_state["grace_period_end_time"]
         charge_start_time_copy = charging_state["session_actual_charge_start_time"]
         queue_list_copy = list(charging_state["queue"])  # Create a copy for safe iteration
 
-    if current_id_copy:
-        time_status_str = format_time_remaining_for_status_display(current_id_copy, grace_time_copy,
-                                                                   charge_start_time_copy)
-        msg_parts.append(f"🔋 <@{current_id_copy}> is the active user. {time_status_str}")
-    else:
-        msg_parts.append("🟢 The charger is currently available.")
+        is_in_grace = grace_time_copy is not None and now < grace_time_copy
+        is_charging = not is_in_grace and charge_start_time_copy and (now < charge_start_time_copy + CHARGE_DURATION)
 
-    if queue_list_copy:
-        queue_status_lines = "\n".join([f"{i + 1}. <@{uid}>" for i, uid in enumerate(queue_list_copy)])
-        msg_parts.append(f"\n📋 Queue:\n{queue_status_lines}")
-    else:
-        msg_parts.append("\nQueue is empty.")
+        if current_id_copy:
+            time_status_str = format_time_remaining_for_status_display(current_id_copy, grace_time_copy,
+                                                                       charge_start_time_copy)
+            msg_parts.append(f"🔋 <@{current_id_copy}> is the active user. {time_status_str}")
+        else:
+            msg_parts.append("🟢 The charger is currently available.")
+
+        if queue_list_copy:
+            # --- Calculate estimated availability time for queue ---
+            estimated_next_available_time_unix = None
+            if is_charging:
+                estimated_next_available_time_unix = charge_start_time_copy + CHARGE_DURATION
+            elif is_in_grace:
+                estimated_next_available_time_unix = grace_time_copy + CHARGE_DURATION
+            elif not current_id_copy and queue_list_copy:
+                estimated_next_available_time_unix = now + GRACE_PERIOD + CHARGE_DURATION
+
+            queue_status_lines = []
+            session_duration_for_queue = CHARGE_DURATION + GRACE_PERIOD
+
+            for i, uid in enumerate(queue_list_copy):
+                line = f"{i + 1}. <@{uid}>"
+                if estimated_next_available_time_unix:
+                    # Format the time like " (Est: 14:30)"
+                    est_time_str = time.strftime('%H:%M', time.localtime(estimated_next_available_time_unix))
+                    line += f" (Est: {est_time_str})"
+                    # Increment for the next person in the queue
+                    estimated_next_available_time_unix += session_duration_for_queue
+                queue_status_lines.append(line)
+
+            if queue_status_lines:
+                msg_parts.append("\n📋 Queue:\n" + "\n".join(queue_status_lines))
+            else: # Should not happen if queue_list_copy is not empty, but for safety
+                msg_parts.append("\nQueue is empty.")
+        else:
+            msg_parts.append("\nQueue is empty.")
 
     say("\n".join(msg_parts))
 
