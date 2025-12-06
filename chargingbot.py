@@ -302,6 +302,41 @@ def _start_next_user_session_from_queue_internal():
     return next_user_id
 
 
+def _calculate_queue_availability_times_internal(is_charging, is_in_grace, current_user_id, queue, charge_start_time, grace_end_time):
+    """
+    Calculates the estimated availability time for each user in the queue.
+    MUST be called with state_lock held.
+    Returns a list of dictionaries, with each containing user 'id' and 'available_at_unix' timestamp.
+    """
+    now = time.time()
+    estimated_next_available_time_unix = None
+
+    if is_charging:
+        # Current user is charging. Next slot is after their session ends.
+        estimated_next_available_time_unix = charge_start_time + CHARGE_DURATION
+    elif is_in_grace:
+        # Current user is in grace. Next slot is after their grace period ends AND a full charge duration.
+        estimated_next_available_time_unix = grace_end_time + CHARGE_DURATION
+    elif not current_user_id and queue:
+        # Charger is free, but there's a queue. This is a transitional state.
+        # Assume the first person will start their grace period now, then charge.
+        estimated_next_available_time_unix = now + GRACE_PERIOD + CHARGE_DURATION
+
+    queue_with_times = []
+    if not estimated_next_available_time_unix:
+        return [{"id": uid, "available_at_unix": None} for uid in queue]
+
+    session_duration_for_queue = CHARGE_DURATION + GRACE_PERIOD
+    current_est_time = estimated_next_available_time_unix
+
+    for uid_in_queue in queue:
+        queue_with_times.append({"id": uid_in_queue, "available_at_unix": current_est_time})
+        # Increment the estimated time for the next person in the queue.
+        current_est_time += session_duration_for_queue
+
+    return queue_with_times
+
+
 # --- User info caching and fetching ---
 user_info_cache = {}  # Simple dict cache: {"U123": {"name": "User A", "timestamp": time.time()}}
 CACHE_TTL_SECONDS = 15 * 60  # Cache user info for 15 minutes
@@ -464,26 +499,17 @@ def chargestatus_command(ack, body, say):
             msg_parts.append("🟢 The charger is currently available.")
 
         if queue_list_copy:
-            # --- Calculate estimated availability time for queue ---
-            estimated_next_available_time_unix = None
-            if is_charging:
-                estimated_next_available_time_unix = charge_start_time_copy + CHARGE_DURATION
-            elif is_in_grace:
-                estimated_next_available_time_unix = grace_time_copy + CHARGE_DURATION
-            elif not current_id_copy and queue_list_copy:
-                estimated_next_available_time_unix = now + GRACE_PERIOD + CHARGE_DURATION
-
+            queue_with_times = _calculate_queue_availability_times_internal(is_charging, is_in_grace, current_id_copy, queue_list_copy, charge_start_time_copy, grace_time_copy)
             queue_status_lines = []
-            session_duration_for_queue = CHARGE_DURATION + GRACE_PERIOD
 
-            for i, uid in enumerate(queue_list_copy):
-                line = f"{i + 1}. <@{uid}>"
-                if estimated_next_available_time_unix:
-                    # Format the time like " (Est: 14:30)"
-                    est_time_str = time.strftime('%H:%M', time.localtime(estimated_next_available_time_unix))
-                    line += f" (Est: {est_time_str})"
-                    # Increment for the next person in the queue
-                    estimated_next_available_time_unix += session_duration_for_queue
+            for i, user_info in enumerate(queue_with_times):
+                line = f"{i + 1}. <@{user_info['id']}>"
+                unix_timestamp = user_info.get("available_at_unix")
+                if unix_timestamp:
+                    # Use Slack's built-in date formatting.
+                    # {date_short_pretty} at {time} -> "Today at 4:30 PM"
+                    # This automatically handles time zones for each user.
+                    line += f" (Est: <!date^{int(unix_timestamp)}^{{date_short_pretty}} at {{time}}|fallback text>)"
                 queue_status_lines.append(line)
 
             if queue_status_lines:
@@ -535,32 +561,15 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                         charge_remaining_s = int(charge_end_time - now)
                     # else: charge already ended, remaining is 0
 
-                # --- Calculate estimated availability time for queue ---
-                estimated_next_available_time_unix = None
-                if is_currently_charging:
-                    # Current user is charging. Next slot is after their session ends.
-                    estimated_next_available_time_unix = charging_state["session_actual_charge_start_time"] + CHARGE_DURATION
-                elif is_in_grace:
-                    # Current user is in grace. Next slot is after their grace period ends and a full charge duration.
-                    estimated_next_available_time_unix = charging_state["grace_period_end_time"] - GRACE_PERIOD + GRACE_PERIOD + CHARGE_DURATION
-                elif not charging_state["current_user_id"] and charging_state["queue"]:
-                    # Charger is free, but there's a queue. This is a transitional state.
-                    # Assume the first person will start their grace period now.
-                    estimated_next_available_time_unix = now + GRACE_PERIOD + CHARGE_DURATION
-
+                # Use the new shared function to calculate queue times
+                queue_with_times = _calculate_queue_availability_times_internal(is_currently_charging, is_in_grace, charging_state["current_user_id"], charging_state["queue"], charging_state["session_actual_charge_start_time"], charging_state["grace_period_end_time"])
+                
                 queue_with_names = []
-                session_duration_for_queue = CHARGE_DURATION + GRACE_PERIOD
-                for uid_in_queue in charging_state["queue"]:
-                    user_available_at = None
-                    if estimated_next_available_time_unix is not None:
-                        user_available_at = estimated_next_available_time_unix
-                        # Increment the estimated time for the next person in the queue.
-                        estimated_next_available_time_unix += session_duration_for_queue
-
+                for user_info in queue_with_times:
                     queue_with_names.append({
-                        "id": uid_in_queue,
-                        "name": get_user_display_name(uid_in_queue, app.client),  # Pass app.client
-                        "available_at_unix": user_available_at
+                        "id": user_info["id"],
+                        "name": get_user_display_name(user_info["id"], app.client),
+                        "available_at_unix": user_info["available_at_unix"]
                     })
 
                 state_for_json = {
