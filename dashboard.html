@@ -42,7 +42,7 @@
 
         .queue-section h2 { font-size: 1.5rem; font-weight: 600; margin-bottom: 15px; color: var(--text-primary); border-bottom: 1px solid var(--border-color); padding-bottom: 10px; }
         .queue-list { list-style: none; padding: 0; margin: 0; }
-        .queue-list li { background-color: var(--bg-color); padding: 12px 15px; border-radius: 6px; margin-bottom: 8px; color: var(--text-secondary); border: 1px solid var(--border-color); transition: background-color 0.3s; }
+        .queue-list li { background-color: var(--bg-color); padding: 12px 15px; border-radius: 6px; margin-bottom: 8px; color: var(--text-secondary); border: 1px solid var(--border-color); transition: background-color 0.3s; display: flex; justify-content: space-between; align-items: center; }
         .queue-list li:last-child { margin-bottom: 0; }
         .queue-list li.empty-queue { text-align: center; font-style: italic; color: var(--text-secondary); border: 1px dashed var(--border-color); }
         .loading-indicator {
@@ -143,6 +143,12 @@
             return `Ends at ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
         }
 
+        function formatAvailableAtTime(unixTimestamp) {
+            if (!unixTimestamp) return "";
+            const date = new Date(unixTimestamp * 1000);
+            return `Est. ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
+        }
+
         function updateDisplayedTimes() {
             updateTextContent(lastUpdatedEl, `Last updated: ${new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}`);
 
@@ -211,9 +217,9 @@
                         currentIcon = '⚡️';
                         updateTextContent(statusTitleEl, 'Charging Now');
                     } else {
-                        newStatusClass = 'available';
+                        newStatusClass = 'available'; // Session ended, charger is free
                         currentIcon = '✅';
-                        updateTextContent(statusTitleEl, 'Charger Free');
+                        updateTextContent(statusTitleEl, 'Session Complete');
                         updateTextContent(statusUserEl, `Last user: ${lastFetchedData.current_user_name || lastFetchedData.current_user_id}`);
                     }
                 } else {
@@ -229,9 +235,12 @@
                 statusCardEl.classList.add(newStatusClass);
 
                 if (lastFetchedData.queue && lastFetchedData.queue.length > 0) {
-                    queueListEl.innerHTML = lastFetchedData.queue.map((user, index) =>
-                        `<li>${index + 1}. ${user.name || user.id}</li>`
-                    ).join('');
+                    queueListEl.innerHTML = lastFetchedData.queue.map((user, index) => {
+                        const estTimeHtml = user.available_at_unix 
+                            ? `<span>${formatAvailableAtTime(user.available_at_unix)}</span>` 
+                            : '';
+                        return `<li><span>${index + 1}. ${user.name || user.id}</span>${estTimeHtml}</li>`;
+                    }).join('');
                 } else {
                     queueListEl.innerHTML = '<li class="empty-queue">Queue is empty</li>';
                 }
