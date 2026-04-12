@@ -2,7 +2,10 @@ import os
 import time
 import threading
 import json
+import smtplib
 from http.server import HTTPServer, BaseHTTPRequestHandler
+from datetime import datetime, timezone
+from email.message import EmailMessage
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import urllib.parse
@@ -30,6 +33,10 @@ charging_state = {
     "session_actual_charge_start_time": None,  # Timestamp when 120-min charge actually began
     "grace_period_end_time": None,  # Timestamp when grace period for current_user_id ends
     "active_session_stop_event": None,  # threading.Event() for the current session's timer thread
+    "disconnect_reminder_invite_uid": None,  # Calendar invite UID for the active session
+    "disconnect_reminder_invite_sent": False,  # Whether the active session's invite was sent successfully
+    "disconnect_reminder_invite_status": "idle",  # idle, pending, sent, skipped_no_smtp, skipped_no_email, failed
+    "disconnect_reminder_invite_error": None,  # Last reminder invite error for the active session
     "queue": [],  # List of user IDs waiting
 }
 
@@ -37,6 +44,150 @@ charging_state = {
 CHARGE_DURATION = 120 * 60  # 120 minutes in seconds
 GRACE_PERIOD = 5 * 60  # 5 minutes in seconds
 TEN_MINUTE_WARNING_BEFORE_END = 10 * 60  # 10 minutes in seconds
+
+# SMTP configuration for reminder invites. These are optional until invite sending is enabled.
+SMTP_HOST = os.environ.get("SMTP_HOST")
+SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
+SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
+SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
+SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL")
+SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes", "on")
+
+
+def smtp_config_is_ready():
+    required_values = (SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL)
+    return all(required_values)
+
+
+def log_smtp_configuration_status():
+    if smtp_config_is_ready():
+        logging.info("SMTP configuration detected. Reminder invite delivery can be enabled.")
+        return
+
+    missing_settings = [
+        key for key, value in (
+            ("SMTP_HOST", SMTP_HOST),
+            ("SMTP_USERNAME", SMTP_USERNAME),
+            ("SMTP_PASSWORD", SMTP_PASSWORD),
+            ("SMTP_FROM_EMAIL", SMTP_FROM_EMAIL),
+        ) if not value
+    ]
+    logging.info(
+        "SMTP configuration incomplete. Missing: %s. Reminder invite delivery will stay disabled until these are set.",
+        ", ".join(missing_settings)
+    )
+
+
+def _format_ics_datetime(unix_timestamp):
+    return datetime.fromtimestamp(unix_timestamp, tz=timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+
+def _escape_ics_text(value):
+    if value is None:
+        return ""
+    return (
+        str(value)
+        .replace("\\", "\\\\")
+        .replace(";", r"\;")
+        .replace(",", r"\,")
+        .replace("\r\n", r"\n")
+        .replace("\n", r"\n")
+    )
+
+
+def build_disconnect_reminder_ics(event_uid, attendee_email, event_start_unix, event_end_unix):
+    created_at = _format_ics_datetime(time.time())
+    event_start = _format_ics_datetime(event_start_unix)
+    event_end = _format_ics_datetime(event_end_unix)
+
+    summary = _escape_ics_text("Disconnect car from charger")
+    description = _escape_ics_text(
+        "Your charging session has ended. Please disconnect your car from the shared charger."
+    )
+    organizer_email = _escape_ics_text(SMTP_FROM_EMAIL or "")
+    attendee_email = _escape_ics_text(attendee_email)
+    event_uid = _escape_ics_text(event_uid)
+
+    return "\r\n".join([
+        "BEGIN:VCALENDAR",
+        "PRODID:-//ChargingBot//Disconnect Reminder//EN",
+        "VERSION:2.0",
+        "CALSCALE:GREGORIAN",
+        "METHOD:REQUEST",
+        "BEGIN:VEVENT",
+        f"UID:{event_uid}",
+        f"DTSTAMP:{created_at}",
+        f"DTSTART:{event_start}",
+        f"DTEND:{event_end}",
+        f"SUMMARY:{summary}",
+        f"DESCRIPTION:{description}",
+        f"ORGANIZER:mailto:{organizer_email}",
+        f"ATTENDEE;ROLE=REQ-PARTICIPANT;RSVP=TRUE:mailto:{attendee_email}",
+        "STATUS:CONFIRMED",
+        "TRANSP:OPAQUE",
+        "END:VEVENT",
+        "END:VCALENDAR",
+        "",
+    ])
+
+
+def build_disconnect_reminder_email(recipient_email, event_uid, event_start_unix, event_end_unix):
+    if not SMTP_FROM_EMAIL:
+        raise ValueError("SMTP_FROM_EMAIL is required to build reminder email.")
+
+    ics_payload = build_disconnect_reminder_ics(
+        event_uid=event_uid,
+        attendee_email=recipient_email,
+        event_start_unix=event_start_unix,
+        event_end_unix=event_end_unix,
+    )
+
+    message = EmailMessage()
+    message["Subject"] = "Reminder: disconnect your car from the charger"
+    message["From"] = SMTP_FROM_EMAIL
+    message["To"] = recipient_email
+    message.set_content(
+        "Your charging session is scheduled to end soon. A calendar invite is attached as a reminder to disconnect your car."
+    )
+    message.add_alternative(
+        "<p>Your charging session is scheduled to end soon.</p>"
+        "<p>A calendar invite is attached as a reminder to disconnect your car.</p>",
+        subtype="html"
+    )
+    message.add_attachment(
+        ics_payload.encode("utf-8"),
+        maintype="text",
+        subtype="calendar",
+        filename="disconnect-reminder.ics",
+        params={"method": "REQUEST", "charset": "UTF-8"}
+    )
+    return message
+
+
+def send_disconnect_reminder_email(recipient_email, event_uid, event_start_unix, event_end_unix):
+    if not smtp_config_is_ready():
+        raise RuntimeError("SMTP configuration is incomplete.")
+
+    message = build_disconnect_reminder_email(
+        recipient_email=recipient_email,
+        event_uid=event_uid,
+        event_start_unix=event_start_unix,
+        event_end_unix=event_end_unix,
+    )
+
+    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
+        smtp.ehlo()
+        if SMTP_USE_TLS:
+            smtp.starttls()
+            smtp.ehlo()
+        smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
+        smtp.send_message(message)
+
+    logging.info(
+        "Sent disconnect reminder invite to %s for event UID %s.",
+        recipient_email,
+        event_uid
+    )
 
 
 # ------------------------
@@ -89,6 +240,99 @@ def _clear_current_session_internal():
     charging_state["session_actual_charge_start_time"] = None
     charging_state["grace_period_end_time"] = None
     charging_state["active_session_stop_event"] = None
+    charging_state["disconnect_reminder_invite_uid"] = None
+    charging_state["disconnect_reminder_invite_sent"] = False
+    charging_state["disconnect_reminder_invite_status"] = "idle"
+    charging_state["disconnect_reminder_invite_error"] = None
+
+
+def _generate_disconnect_reminder_uid(user_id, session_start_unix):
+    return f"disconnect-reminder-{user_id}-{int(session_start_unix)}@chargingbot"
+
+
+def _send_disconnect_reminder_for_active_session(user_id, session_start_unix, invite_uid):
+    if not smtp_config_is_ready():
+        logging.info("Skipping disconnect reminder invite for %s because SMTP is not configured.", user_id)
+        with state_lock:
+            if charging_state["current_user_id"] == user_id and \
+                    charging_state["session_actual_charge_start_time"] == session_start_unix and \
+                    charging_state["disconnect_reminder_invite_uid"] == invite_uid:
+                charging_state["disconnect_reminder_invite_status"] = "skipped_no_smtp"
+                charging_state["disconnect_reminder_invite_error"] = "SMTP configuration is incomplete."
+        return
+
+    recipient_email = get_user_email(user_id, app.client)
+    if not recipient_email:
+        logging.warning("Skipping disconnect reminder invite for %s because no Slack email was found.", user_id)
+        with state_lock:
+            if charging_state["current_user_id"] == user_id and \
+                    charging_state["session_actual_charge_start_time"] == session_start_unix and \
+                    charging_state["disconnect_reminder_invite_uid"] == invite_uid:
+                charging_state["disconnect_reminder_invite_status"] = "skipped_no_email"
+                charging_state["disconnect_reminder_invite_error"] = "No Slack email address was found for the user."
+        return
+
+    event_start_unix = session_start_unix + CHARGE_DURATION
+    event_end_unix = event_start_unix + GRACE_PERIOD
+
+    try:
+        send_disconnect_reminder_email(
+            recipient_email=recipient_email,
+            event_uid=invite_uid,
+            event_start_unix=event_start_unix,
+            event_end_unix=event_end_unix,
+        )
+    except Exception as e:
+        logging.error(
+            "Failed to send disconnect reminder invite to %s for user %s: %s",
+            recipient_email,
+            user_id,
+            e,
+            exc_info=True
+        )
+        with state_lock:
+            if charging_state["current_user_id"] == user_id and \
+                    charging_state["session_actual_charge_start_time"] == session_start_unix and \
+                    charging_state["disconnect_reminder_invite_uid"] == invite_uid:
+                charging_state["disconnect_reminder_invite_status"] = "failed"
+                charging_state["disconnect_reminder_invite_error"] = str(e)
+        return
+
+    with state_lock:
+        if charging_state["current_user_id"] == user_id and \
+                charging_state["session_actual_charge_start_time"] == session_start_unix and \
+                charging_state["disconnect_reminder_invite_uid"] == invite_uid:
+            charging_state["disconnect_reminder_invite_sent"] = True
+            charging_state["disconnect_reminder_invite_status"] = "sent"
+            charging_state["disconnect_reminder_invite_error"] = None
+
+
+def _prepare_disconnect_reminder_for_new_session(user_id, session_start_unix):
+    invite_uid = None
+    with state_lock:
+        if charging_state["current_user_id"] != user_id or \
+                charging_state["session_actual_charge_start_time"] != session_start_unix:
+            return
+
+        if charging_state["disconnect_reminder_invite_status"] != "pending" and \
+                charging_state["disconnect_reminder_invite_sent"]:
+            return
+
+        if charging_state["disconnect_reminder_invite_status"] in (
+                "sent", "skipped_no_smtp", "skipped_no_email", "failed"):
+            return
+
+        if charging_state["disconnect_reminder_invite_uid"] is None:
+            charging_state["disconnect_reminder_invite_uid"] = _generate_disconnect_reminder_uid(
+                user_id,
+                session_start_unix
+            )
+
+        charging_state["disconnect_reminder_invite_status"] = "pending"
+        charging_state["disconnect_reminder_invite_error"] = None
+        invite_uid = charging_state["disconnect_reminder_invite_uid"]
+
+    _send_disconnect_reminder_for_active_session(user_id, session_start_unix, invite_uid)
 
 
 def _session_management_thread_target(user_id, grace_duration, charge_duration, stop_event):
@@ -144,8 +388,10 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
 
                 charging_state["session_actual_charge_start_time"] = time.time()
                 charging_state["grace_period_end_time"] = None  # Grace period is over
+                session_start_time = charging_state["session_actual_charge_start_time"]
                 logging.info(
                     f"[{current_thread_name}] User {user_id} grace period ended. Actual charge started at {charging_state['session_actual_charge_start_time']:.2f}.")
+            _prepare_disconnect_reminder_for_new_session(user_id, session_start_time)
             safe_post_message(app.client, channel=user_id, text="⏱️ Your 120-minute charging session has started.")
         else:  # No grace period was configured (currently all paths have grace for new sessions)
             with state_lock:
@@ -160,9 +406,11 @@ def _session_management_thread_target(user_id, grace_duration, charge_duration, 
                 if charging_state["session_actual_charge_start_time"] is None:  # Only set if not already set by caller
                     charging_state["session_actual_charge_start_time"] = time.time()
                 charging_state["grace_period_end_time"] = None  # Ensure it's None
+                session_start_time = charging_state["session_actual_charge_start_time"]
                 logging.info(
                     f"[{current_thread_name}] User {user_id} starting charge (no grace) at {charging_state['session_actual_charge_start_time']:.2f}.")
 
+            _prepare_disconnect_reminder_for_new_session(user_id, session_start_time)
             safe_post_message(app.client, channel=user_id,
                               text="⏱️ Your 120-minute charging session has started (no grace period).")
 
@@ -264,6 +512,10 @@ def _start_user_session_flow_internal(user_id, has_grace_period):
     charging_state["current_user_id"] = user_id
     new_stop_event = threading.Event()
     charging_state["active_session_stop_event"] = new_stop_event
+    charging_state["disconnect_reminder_invite_uid"] = None
+    charging_state["disconnect_reminder_invite_sent"] = False
+    charging_state["disconnect_reminder_invite_status"] = "idle"
+    charging_state["disconnect_reminder_invite_error"] = None
 
     grace_to_pass = GRACE_PERIOD if has_grace_period else 0
     if has_grace_period:
@@ -338,40 +590,70 @@ def _calculate_queue_availability_times_internal(is_charging, is_in_grace, curre
 
 
 # --- User info caching and fetching ---
-user_info_cache = {}  # Simple dict cache: {"U123": {"name": "User A", "timestamp": time.time()}}
+user_info_cache = {}  # Simple dict cache: {"U123": {"display_name": "User A", "email": "user@example.com", "timestamp": time.time()}}
 CACHE_TTL_SECONDS = 15 * 60  # Cache user info for 15 minutes
+
+
+def _fetch_and_cache_user_info(user_id, slack_client):
+    if not user_id:
+        return None
+
+    now = time.time()
+    cached_entry = user_info_cache.get(user_id)
+    if cached_entry and (now - cached_entry["timestamp"] < CACHE_TTL_SECONDS):
+        return cached_entry
+
+    try:
+        user_info_response = slack_client.users_info(user=user_id)
+        if user_info_response and user_info_response["ok"]:
+            user_data = user_info_response["user"]
+            profile_data = user_data.get("profile", {})
+            display_name = profile_data.get("display_name", "") or user_data.get("real_name", "") or user_id
+            email = profile_data.get("email")
+
+            cached_entry = {
+                "display_name": display_name,
+                "email": email,
+                "timestamp": now
+            }
+            user_info_cache[user_id] = cached_entry
+            return cached_entry
+
+        logging.warning(
+            f"Slack API error for users.info (user: {user_id}) in _fetch_and_cache_user_info: "
+            f"{user_info_response.get('error', 'Unknown error') if user_info_response else 'Empty response'}"
+        )
+    except Exception as e:
+        logging.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
+
+    # Cache fallback for a shorter period to avoid hammering on persistent errors.
+    fallback_entry = {
+        "display_name": user_id,
+        "email": None,
+        "timestamp": now - (CACHE_TTL_SECONDS - 60)
+    }
+    user_info_cache[user_id] = fallback_entry
+    return fallback_entry
 
 
 def get_user_display_name(user_id, slack_client):
     if not user_id:
         return "Unknown User"
 
-    now = time.time()
-    cached_entry = user_info_cache.get(user_id)
-    if cached_entry and (now - cached_entry["timestamp"] < CACHE_TTL_SECONDS):
-        return cached_entry["name"]
+    user_info = _fetch_and_cache_user_info(user_id, slack_client)
+    if not user_info:
+        return user_id
+    return user_info["display_name"]
 
-    try:
-        user_info_response = slack_client.users_info(user=user_id)
-        if user_info_response and user_info_response["ok"]:
-            user_data = user_info_response["user"]
-            display_name = user_data.get("profile", {}).get("display_name", "")
-            real_name = user_data.get("real_name", "")
-            name_to_return = display_name if display_name else real_name
-            if not name_to_return: name_to_return = user_id  # Fallback to ID if no name found
 
-            user_info_cache[user_id] = {"name": name_to_return, "timestamp": now}
-            return name_to_return
-        else:
-            logging.warning(
-                f"Slack API error for users.info (user: {user_id}) in get_user_display_name: {user_info_response.get('error', 'Unknown error') if user_info_response else 'Empty response'}")
-            # Cache failure for a shorter period to avoid hammering on persistent errors
-            user_info_cache[user_id] = {"name": user_id, "timestamp": now}
-            return user_id  # Fallback to user_id
-    except Exception as e:
-        logging.error(f"Exception fetching user info for {user_id}: {e}", exc_info=True)
-        user_info_cache[user_id] = {"name": user_id, "timestamp": now}
-        return user_id  # Fallback to user_id
+def get_user_email(user_id, slack_client):
+    if not user_id:
+        return None
+
+    user_info = _fetch_and_cache_user_info(user_id, slack_client)
+    if not user_info:
+        return None
+    return user_info["email"]
 
 
 # --- End of user info caching section ---
@@ -583,6 +865,10 @@ class HealthCheckHandler(BaseHTTPRequestHandler):
                     "charge_session_duration_seconds": CHARGE_DURATION if charging_state[
                         "session_actual_charge_start_time"] else None,
                     "charge_session_remaining_seconds": charge_remaining_s,
+                    "disconnect_reminder_invite_uid": charging_state["disconnect_reminder_invite_uid"],
+                    "disconnect_reminder_invite_sent": charging_state["disconnect_reminder_invite_sent"],
+                    "disconnect_reminder_invite_status": charging_state["disconnect_reminder_invite_status"],
+                    "disconnect_reminder_invite_error": charging_state["disconnect_reminder_invite_error"],
                     "queue": queue_with_names,  # MODIFIED to include names
                     "queue_length": len(charging_state["queue"])
                 }
@@ -624,6 +910,7 @@ def start_http_server_func():
 # ------------------------
 if __name__ == "__main__":
     logging.info("Starting EV Charging Bot...")
+    log_smtp_configuration_status()
 
     http_server_thread = threading.Thread(target=start_http_server_func, daemon=True)
     http_server_thread.start()

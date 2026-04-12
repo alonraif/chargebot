@@ -1,181 +1,148 @@
 # EV Charger Slack Bot & Dashboard
 
-This project provides a Slack bot to manage a shared EV (Electric Vehicle) charger and a web-based dashboard to display its current status and queue. Users can interact with the bot via Slack commands to check-in, request a charging spot, view the status, leave the queue, or end their session early.
+This project provides a Slack bot for managing a shared EV charger, plus a small web dashboard for current status and queue visibility. Users interact through Slack commands to claim the charger, join the queue, check status, leave the queue, or end a session early.
 
 ## Features
 
-*   **Slack Integration:**
-    *   `/checkin`: Allows a user to claim an available charger, starting a grace period to plug in.
-    *   `/request`: Adds a user to the queue if the charger is busy or claims it if free.
-    *   `/endcharge`: Allows the current user to end their charging session early.
-    *   `/exitqueue`: Allows a user to remove themselves from the waiting queue.
-    *   `/chargestatus`: Displays the current charger status, active user, time remaining, and the queue in Slack.
-*   **Session Management:**
-    *   Configurable charge duration (default: 90 minutes).
-    *   Configurable grace period (default: 5 minutes) for the user to plug in.
-    *   Automatic notifications to users:
-        *   When their session starts.
-        *   10-minute warning before their session ends.
-        *   When their session ends.
-        *   When the charger becomes available for the next user in the queue.
-*   **Web Dashboard:**
-    *   Real-time status display: Available, Grace Period (with countdown), Charging (with countdown).
-    *   Displays current user's name.
-    *   Shows the current waiting queue with user names.
-    *   Light/Dark theme toggle.
-    *   Auto-refreshes data.
-    *   Accessible via `/dashboard` endpoint.
-*   **JSON API:**
-    *   Provides charger status and queue data in JSON format at the `/status` endpoint.
-*   **Health Check:**
-    *   Simple health check endpoint at `/`.
+- Slack commands:
+  `/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargestatus`
+- Session management:
+  configurable 120-minute charging window, 5-minute grace period, start/end notifications, 10-minute warning, and automatic queue promotion
+- Disconnect reminder invite:
+  when a session starts, the bot can email a `.ics` calendar invite scheduled for the expected end of the session
+- Dashboard:
+  `/dashboard` shows live charger state and queue
+- JSON API:
+  `/status` exposes charger state, queue state, and reminder-invite state
+- Health check:
+  `/` returns a simple alive response
 
-## Technology Stack
+## Technology
 
-*   **Backend:**
-    *   Python 3
-    *   Slack Bolt for Python (Slack API interaction)
-    *   Standard Library `http.server` (for web dashboard and API)
-    *   Threading for concurrent session management
-*   **Frontend (Dashboard):**
-    *   HTML5
-    *   CSS3 (with CSS Variables for theming)
-    *   Vanilla JavaScript (for dynamic updates and API calls)
-*   **Environment:**
-    *   Requires Slack App Bot Token and App-Level Token.
+- Python 3
+- Slack Bolt for Python
+- Standard library `http.server`
+- Standard library SMTP and email helpers
+- Vanilla HTML/CSS/JavaScript for the dashboard
 
 ## Prerequisites
 
-*   Python 3.7+
-*   `pip` (Python package installer)
-*   A Slack Workspace where you can create and install an app.
-*   (Optional, for local development exposing to Slack) ngrok or a similar tunneling service if your bot is not hosted on a publicly accessible URL (though Socket Mode largely mitigates this need for command/event handling).
+- Python 3.7+
+- `pip`
+- A Slack workspace where you can create and install an app
+- An SMTP account if you want disconnect reminder invites
 
-## Setup and Installation
+## Setup
 
-1.  **Clone the Repository:**
-    ```bash
-    git clone <your-repository-url>
-    cd <your-repository-name>
-    ```
+1. Clone the repository.
+   ```bash
+   git clone <your-repository-url>
+   cd chargebot
+   ```
 
-2.  **Create a Slack App:**
-    *   Go to [https://api.slack.com/apps](https://api.slack.com/apps) and click "Create New App".
-    *   Choose "From scratch".
-    *   Name your app (e.g., "EV Charger Bot") and select your workspace.
-    *   **Enable Socket Mode:**
-        *   In the sidebar, go to "Settings" -> "Socket Mode".
-        *   Enable Socket Mode.
-        *   Generate an **App-Level Token**. Name it something like `socket-connections-token`.
-        *   Grant it the `connections:write` scope.
-        *   Copy this token. This will be your `SLACK_APP_TOKEN`.
-    *   **Configure Bot Token Scopes:**
-        *   In the sidebar, go to "Features" -> "OAuth & Permissions".
-        *   Scroll down to "Scopes" -> "Bot Token Scopes".
-        *   Add the following scopes:
-            *   `chat:write` (to send messages)
-            *   `commands` (to register and use slash commands)
-            *   `users:read` (to fetch user display names for the dashboard)
-    *   **Install App to Workspace:**
-        *   At the top of the "OAuth & Permissions" page, click "Install to Workspace".
-        *   Authorize the installation.
-        *   Copy the **Bot User OAuth Token**. This will be your `SLACK_BOT_TOKEN`.
-    *   **Register Slash Commands:**
-        *   In the sidebar, go to "Features" -> "Slash Commands".
-        *   Click "Create New Command" for each of the following:
-            *   Command: `/checkin`
-              Short Description: Check-in to use the EV charger.
-              Usage Hint: ` `
-            *   Command: `/request`
-              Short Description: Request the EV charger or join the queue.
-              Usage Hint: ` `
-            *   Command: `/endcharge`
-              Short Description: End your current charging session.
-              Usage Hint: ` `
-            *   Command: `/exitqueue`
-              Short Description: Leave the EV charger waiting queue.
-              Usage Hint: ` `
-            *   Command: `/chargestatus`
-              Short Description: View the current EV charger status and queue.
-              Usage Hint: ` `
-        *   *Note: Request URLs are not needed when using Socket Mode for commands handled by Bolt.*
+2. Create and configure a Slack app.
+   Enable Socket Mode.
+   Create an app-level token with `connections:write` and use it as `SLACK_APP_TOKEN`.
+   Add bot token scopes:
+   `chat:write`, `commands`, `users:read`, `users:read.email`
+   Install or reinstall the app to the workspace and use the bot token as `SLACK_BOT_TOKEN`.
+   Register these slash commands:
+   `checkin`, `request`, `endcharge`, `exitqueue`, `chargestatus`
 
-3.  **Set Up Environment Variables:**
-    Create a `.env` file in the project root or set these environment variables in your shell:
-    ```
-    SLACK_BOT_TOKEN="xoxb-your-bot-token"
-    SLACK_APP_TOKEN="xapp-your-app-level-token"
-    # PORT=8080 # Optional, defaults to 8080 for the web dashboard
-    ```
-    *If using a `.env` file, you might want to add `python-dotenv` to your `requirements.txt` and load it at the beginning of your script, though the provided code reads directly from `os.environ`.*
+3. Configure environment variables.
+   The repository includes a sample file at `.env.example`.
+   The app reads directly from `os.environ`.
 
-4.  **Install Python Dependencies:**
-    It's recommended to use a virtual environment:
-    ```bash
-    python -m venv venv
-    source venv/bin/activate  # On Windows: venv\Scripts\activate
-    ```
-    Install the required packages (based on the imports in `app.py`):
-    ```bash
-    pip install slack_bolt
-    ```
-    Create a `requirements.txt` for easy installation:
-    ```bash
-    pip freeze > requirements.txt
-    ```
-    (Then others can just do `pip install -r requirements.txt`)
+   ```bash
+   SLACK_BOT_TOKEN="xoxb-your-bot-token"
+   SLACK_APP_TOKEN="xapp-your-app-level-token"
+   SMTP_HOST="smtp.gmail.com"
+   SMTP_PORT="587"
+   SMTP_USERNAME="your-bot-account@gmail.com"
+   SMTP_PASSWORD="your-app-password"
+   SMTP_FROM_EMAIL="your-bot-account@gmail.com"
+   SMTP_USE_TLS="true"
+   # PORT=8080
+   ```
 
-5.  **Place Dashboard HTML:**
-    Ensure the `dashboard.html` file (your frontend code) is in the same directory as your Python backend script (`app.py`).
+   For Gmail, use a dedicated account, enable 2-Step Verification, and generate an App Password for `SMTP_PASSWORD`.
 
-6.  **Run the Backend Server:**
-    ```bash
-    python app.py
-    ```
-    You should see log messages indicating the bot is starting and connecting to Slack via Socket Mode, and the HTTP server starting.
+   On Render, store these values in the service Environment settings rather than in Git.
 
-7.  **Access the Dashboard:**
-    Open your web browser and go to `http://localhost:8080/dashboard` (or the port you configured).
+4. Install dependencies.
+   ```bash
+   python3 -m venv venv
+   source venv/bin/activate
+   pip install -r requirements.txt
+   ```
+
+5. Run the bot.
+   ```bash
+   python3 chargingbot.py
+   ```
+
+6. Open the dashboard.
+   Visit `http://localhost:8080/dashboard` or the configured `PORT`.
+
+## Reminder Invite Behavior
+
+The disconnect reminder is sent when the bot marks a charging session as started, not when the user runs `/checkin`.
+
+- Session start is the moment the app sets `session_actual_charge_start_time`
+- The calendar event starts at `session_actual_charge_start_time + CHARGE_DURATION`
+- The event lasts 5 minutes
+- The invite is sent once per session
+- If SMTP is not configured, Slack has no email for the user, or delivery fails, charging flow continues normally and the result is only logged and exposed in `/status`
 
 ## Usage
 
-*   **Slack Commands:** Interact with the bot in any Slack channel it's been invited to, or directly via its DM channel.
-    *   `/checkin`: If the charger is free, reserves it for you and starts a 5-minute grace period to plug in.
-    *   `/request`: If the charger is free, same as `/checkin`. If busy, adds you to the queue.
-    *   `/endcharge`: If you are the current user, ends your session and makes the charger available for the next person in queue (if any).
-    *   `/exitqueue`: If you are in the queue, removes you from it.
-    *   `/chargestatus`: Shows who is charging/in grace period, time remaining, and lists users in the queue.
-*   **Web Dashboard:** Provides a visual overview of the charger status, current user, time remaining, and the queue. Auto-refreshes.
+- `/checkin`
+  Claims a free charger and starts the 5-minute grace period.
+- `/request`
+  Claims the charger if free, otherwise joins the queue.
+- `/endcharge`
+  Ends the active session early and promotes the next queued user if present.
+- `/exitqueue`
+  Removes the user from the queue.
+- `/chargestatus`
+  Shows active user, grace/charge timing, and queue state.
 
-## Project Structure (Simplified)
+## `/status` Response
 
+The `/status` endpoint includes reminder-invite fields for the active session:
+
+- `disconnect_reminder_invite_uid`
+- `disconnect_reminder_invite_sent`
+- `disconnect_reminder_invite_status`
+- `disconnect_reminder_invite_error`
+
+Possible `disconnect_reminder_invite_status` values:
+
+- `idle`
+- `pending`
+- `sent`
+- `skipped_no_smtp`
+- `skipped_no_email`
+- `failed`
+
+## Project Structure
+
+```text
 .
-├── app.py # Python backend (Slack bot, HTTP server)
-├── dashboard.html # HTML, CSS, JS for the web dashboard
-├── requirements.txt # Python dependencies
-└── README.md # This file
-
+├── chargingbot.py
+├── dashboard.html
+├── requirements.txt
+├── .env.example
+└── README.md
+```
 
 ## Logging
 
-The application uses basic logging to `INFO` level. Logs include timestamps, log level, thread name, and messages, which are printed to standard output. This is helpful for monitoring bot activity and troubleshooting.
+The app logs to standard output at `INFO` level with timestamps, thread name, and error details. This is the main source for operational troubleshooting.
 
 ## Customization
 
-*   **Durations:** `CHARGE_DURATION`, `GRACE_PERIOD`, `TEN_MINUTE_WARNING_BEFORE_END` constants in `app.py` can be modified.
-*   **Port:** The HTTP server port can be changed via the `PORT` environment variable.
-*   **Dashboard Styling:** Modify `dashboard.html` to change the appearance.
-
-## Contributing
-
-Contributions are welcome! Please feel free to submit a pull request or open an issue.
-
-1.  Fork the repository.
-2.  Create your feature branch (`git checkout -b feature/AmazingFeature`).
-3.  Commit your changes (`git commit -m 'Add some AmazingFeature'`).
-4.  Push to the branch (`git push origin feature/AmazingFeature`).
-5.  Open a Pull Request.
-
-## License
-
-This project is licensed under the MIT License - see the `LICENSE` file for details (if you choose to add one).
+- Update `CHARGE_DURATION`, `GRACE_PERIOD`, and `TEN_MINUTE_WARNING_BEFORE_END` in `chargingbot.py`
+- Change the HTTP port with `PORT`
+- Modify `dashboard.html` for dashboard styling
+- Leave SMTP variables unset if you want the bot to run without reminder invite delivery
