@@ -2,13 +2,14 @@ import os
 import time
 import threading
 import json
-import smtplib
+import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from datetime import datetime, timezone
 from email.message import EmailMessage
 from slack_bolt import App
 from slack_bolt.adapter.socket_mode import SocketModeHandler
 import urllib.parse
+import urllib.request
 import logging
 
 # Setup basic logging
@@ -35,7 +36,7 @@ charging_state = {
     "active_session_stop_event": None,  # threading.Event() for the current session's timer thread
     "disconnect_reminder_invite_uid": None,  # Calendar invite UID for the active session
     "disconnect_reminder_invite_sent": False,  # Whether the active session's invite was sent successfully
-    "disconnect_reminder_invite_status": "idle",  # idle, pending, sent, skipped_no_smtp, skipped_no_email, failed
+    "disconnect_reminder_invite_status": "idle",  # idle, pending, sent, skipped_no_gmail_api, skipped_no_email, failed
     "disconnect_reminder_invite_error": None,  # Last reminder invite error for the active session
     "queue": [],  # List of user IDs waiting
 }
@@ -45,35 +46,41 @@ CHARGE_DURATION = 120 * 60  # 120 minutes in seconds
 GRACE_PERIOD = 5 * 60  # 5 minutes in seconds
 TEN_MINUTE_WARNING_BEFORE_END = 10 * 60  # 10 minutes in seconds
 
-# SMTP configuration for reminder invites. These are optional until invite sending is enabled.
-SMTP_HOST = os.environ.get("SMTP_HOST")
-SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
-SMTP_USERNAME = os.environ.get("SMTP_USERNAME")
-SMTP_PASSWORD = os.environ.get("SMTP_PASSWORD")
-SMTP_FROM_EMAIL = os.environ.get("SMTP_FROM_EMAIL")
-SMTP_USE_TLS = os.environ.get("SMTP_USE_TLS", "true").lower() in ("1", "true", "yes", "on")
+# Gmail API configuration for reminder invites. These are optional until invite sending is enabled.
+GMAIL_CLIENT_ID = os.environ.get("GMAIL_CLIENT_ID")
+GMAIL_CLIENT_SECRET = os.environ.get("GMAIL_CLIENT_SECRET")
+GMAIL_REFRESH_TOKEN = os.environ.get("GMAIL_REFRESH_TOKEN")
+GMAIL_TOKEN_URI = os.environ.get("GMAIL_TOKEN_URI", "https://oauth2.googleapis.com/token")
+GMAIL_FROM_EMAIL = os.environ.get("GMAIL_FROM_EMAIL")
 
 
-def smtp_config_is_ready():
-    required_values = (SMTP_HOST, SMTP_USERNAME, SMTP_PASSWORD, SMTP_FROM_EMAIL)
+def gmail_api_config_is_ready():
+    required_values = (
+        GMAIL_CLIENT_ID,
+        GMAIL_CLIENT_SECRET,
+        GMAIL_REFRESH_TOKEN,
+        GMAIL_TOKEN_URI,
+        GMAIL_FROM_EMAIL,
+    )
     return all(required_values)
 
 
-def log_smtp_configuration_status():
-    if smtp_config_is_ready():
-        logging.info("SMTP configuration detected. Reminder invite delivery can be enabled.")
+def log_gmail_api_configuration_status():
+    if gmail_api_config_is_ready():
+        logging.info("Gmail API configuration detected. Reminder invite delivery can be enabled.")
         return
 
     missing_settings = [
         key for key, value in (
-            ("SMTP_HOST", SMTP_HOST),
-            ("SMTP_USERNAME", SMTP_USERNAME),
-            ("SMTP_PASSWORD", SMTP_PASSWORD),
-            ("SMTP_FROM_EMAIL", SMTP_FROM_EMAIL),
+            ("GMAIL_CLIENT_ID", GMAIL_CLIENT_ID),
+            ("GMAIL_CLIENT_SECRET", GMAIL_CLIENT_SECRET),
+            ("GMAIL_REFRESH_TOKEN", GMAIL_REFRESH_TOKEN),
+            ("GMAIL_TOKEN_URI", GMAIL_TOKEN_URI),
+            ("GMAIL_FROM_EMAIL", GMAIL_FROM_EMAIL),
         ) if not value
     ]
     logging.info(
-        "SMTP configuration incomplete. Missing: %s. Reminder invite delivery will stay disabled until these are set.",
+        "Gmail API configuration incomplete. Missing: %s. Reminder invite delivery will stay disabled until these are set.",
         ", ".join(missing_settings)
     )
 
@@ -104,7 +111,7 @@ def build_disconnect_reminder_ics(event_uid, attendee_email, event_start_unix, e
     description = _escape_ics_text(
         "Your charging session has ended. Please disconnect your car from the shared charger."
     )
-    organizer_email = _escape_ics_text(SMTP_FROM_EMAIL or "")
+    organizer_email = _escape_ics_text(GMAIL_FROM_EMAIL or "")
     attendee_email = _escape_ics_text(attendee_email)
     event_uid = _escape_ics_text(event_uid)
 
@@ -132,8 +139,8 @@ def build_disconnect_reminder_ics(event_uid, attendee_email, event_start_unix, e
 
 
 def build_disconnect_reminder_email(recipient_email, event_uid, event_start_unix, event_end_unix):
-    if not SMTP_FROM_EMAIL:
-        raise ValueError("SMTP_FROM_EMAIL is required to build reminder email.")
+    if not GMAIL_FROM_EMAIL:
+        raise ValueError("GMAIL_FROM_EMAIL is required to build reminder email.")
 
     ics_payload = build_disconnect_reminder_ics(
         event_uid=event_uid,
@@ -144,7 +151,7 @@ def build_disconnect_reminder_email(recipient_email, event_uid, event_start_unix
 
     message = EmailMessage()
     message["Subject"] = "Reminder: disconnect your car from the charger"
-    message["From"] = SMTP_FROM_EMAIL
+    message["From"] = GMAIL_FROM_EMAIL
     message["To"] = recipient_email
     message.set_content(
         "Your charging session is scheduled to end soon. A calendar invite is attached as a reminder to disconnect your car."
@@ -164,9 +171,34 @@ def build_disconnect_reminder_email(recipient_email, event_uid, event_start_unix
     return message
 
 
+def _fetch_gmail_api_access_token():
+    token_request_data = urllib.parse.urlencode({
+        "client_id": GMAIL_CLIENT_ID,
+        "client_secret": GMAIL_CLIENT_SECRET,
+        "refresh_token": GMAIL_REFRESH_TOKEN,
+        "grant_type": "refresh_token",
+    }).encode("utf-8")
+
+    request = urllib.request.Request(
+        GMAIL_TOKEN_URI,
+        data=token_request_data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST"
+    )
+
+    with urllib.request.urlopen(request, timeout=30) as response:
+        response_data = json.loads(response.read().decode("utf-8"))
+
+    access_token = response_data.get("access_token")
+    if not access_token:
+        raise RuntimeError("Gmail token response did not include an access token.")
+
+    return access_token
+
+
 def send_disconnect_reminder_email(recipient_email, event_uid, event_start_unix, event_end_unix):
-    if not smtp_config_is_ready():
-        raise RuntimeError("SMTP configuration is incomplete.")
+    if not gmail_api_config_is_ready():
+        raise RuntimeError("Gmail API configuration is incomplete.")
 
     message = build_disconnect_reminder_email(
         recipient_email=recipient_email,
@@ -175,13 +207,20 @@ def send_disconnect_reminder_email(recipient_email, event_uid, event_start_unix,
         event_end_unix=event_end_unix,
     )
 
-    with smtplib.SMTP(SMTP_HOST, SMTP_PORT, timeout=30) as smtp:
-        smtp.ehlo()
-        if SMTP_USE_TLS:
-            smtp.starttls()
-            smtp.ehlo()
-        smtp.login(SMTP_USERNAME, SMTP_PASSWORD)
-        smtp.send_message(message)
+    access_token = _fetch_gmail_api_access_token()
+    raw_message = base64.urlsafe_b64encode(message.as_bytes()).decode("utf-8")
+    send_request = urllib.request.Request(
+        "https://gmail.googleapis.com/gmail/v1/users/me/messages/send",
+        data=json.dumps({"raw": raw_message}).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+        },
+        method="POST"
+    )
+
+    with urllib.request.urlopen(send_request, timeout=30):
+        pass
 
     logging.info(
         "Sent disconnect reminder invite to %s for event UID %s.",
@@ -251,14 +290,14 @@ def _generate_disconnect_reminder_uid(user_id, session_start_unix):
 
 
 def _send_disconnect_reminder_for_active_session(user_id, session_start_unix, invite_uid):
-    if not smtp_config_is_ready():
-        logging.info("Skipping disconnect reminder invite for %s because SMTP is not configured.", user_id)
+    if not gmail_api_config_is_ready():
+        logging.info("Skipping disconnect reminder invite for %s because Gmail API is not configured.", user_id)
         with state_lock:
             if charging_state["current_user_id"] == user_id and \
                     charging_state["session_actual_charge_start_time"] == session_start_unix and \
                     charging_state["disconnect_reminder_invite_uid"] == invite_uid:
-                charging_state["disconnect_reminder_invite_status"] = "skipped_no_smtp"
-                charging_state["disconnect_reminder_invite_error"] = "SMTP configuration is incomplete."
+                charging_state["disconnect_reminder_invite_status"] = "skipped_no_gmail_api"
+                charging_state["disconnect_reminder_invite_error"] = "Gmail API configuration is incomplete."
         return
 
     recipient_email = get_user_email(user_id, app.client)
@@ -319,7 +358,7 @@ def _prepare_disconnect_reminder_for_new_session(user_id, session_start_unix):
             return
 
         if charging_state["disconnect_reminder_invite_status"] in (
-                "sent", "skipped_no_smtp", "skipped_no_email", "failed"):
+                "sent", "skipped_no_gmail_api", "skipped_no_email", "failed"):
             return
 
         if charging_state["disconnect_reminder_invite_uid"] is None:
@@ -910,7 +949,7 @@ def start_http_server_func():
 # ------------------------
 if __name__ == "__main__":
     logging.info("Starting EV Charging Bot...")
-    log_smtp_configuration_status()
+    log_gmail_api_configuration_status()
 
     http_server_thread = threading.Thread(target=start_http_server_func, daemon=True)
     http_server_thread.start()
