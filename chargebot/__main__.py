@@ -48,6 +48,11 @@ def _make_store(cfg: Config, client):
     return MemoryStore()
 
 
+def make_app(cfg: Config, **kwargs) -> App:
+    # Socket Mode never receives signed HTTP requests, so there's no signing secret to verify.
+    return App(token=cfg.slack_bot_token, request_verification_enabled=False, **kwargs)
+
+
 def main() -> None:
     logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s [%(threadName)s] %(message)s")
     cfg = Config.from_env()
@@ -55,7 +60,7 @@ def main() -> None:
         log.error("SLACK_BOT_TOKEN and SLACK_APP_TOKEN must be set.")
         sys.exit(1)
 
-    app = App(token=cfg.slack_bot_token)
+    app = make_app(cfg)
     cfg = _resolve_slack_ids(cfg, app.client)
 
     store = _make_store(cfg, app.client)

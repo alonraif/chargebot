@@ -209,3 +209,12 @@ def test_unknown_subcommand_shows_help(bot):
     command(app, fake, "/charge", "dance")
     assert fake.wait_for("/respond")
     assert "know `dance`" in json.dumps([b for p, b in fake.calls if p.endswith("/respond")][-1])
+
+
+def test_production_app_builds_without_signing_secret(monkeypatch):
+    from chargebot.__main__ import make_app
+    monkeypatch.delenv("SLACK_SIGNING_SECRET", raising=False)
+    app = make_app(Config(slack_bot_token="xoxb-test"), token_verification_enabled=False)
+    h = Harness(Config(web_secret="t"))
+    users = UserDirectory(app.client)
+    register(app, h.cfg, h.engine, Notifier(h.cfg, app.client, h.engine, users, h.store), users)
