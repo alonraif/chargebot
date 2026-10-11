@@ -238,7 +238,8 @@
   };
 
   /* Push notifications on this device. */
-  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isIOS = !/Android/.test(navigator.userAgent) &&
+    (/iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
   const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
   CB.pushSupport = function () {
     if (isIOS && !isStandalone()) return "ios-install"; // iPhone only allows push in the Home Screen app

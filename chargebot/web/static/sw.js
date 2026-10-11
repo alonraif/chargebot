@@ -1,9 +1,9 @@
 /* Service worker: makes the dashboard installable and lets the app shell open without a connection.
    Pages and assets are fetched fresh when online (network first); live data (/api) is never cached. */
-const CACHE = "juice-v7";
+const CACHE = "juice-v9";
 const SHELL = [
-  "/", "/stats",
-  "/static/app.css?v=7", "/static/app.js?v=7", "/static/dashboard.js?v=7", "/static/stats.js?v=7",
+  "/", "/stats", "/guide",
+  "/static/app.css?v=9", "/static/app.js?v=9", "/static/dashboard.js?v=9", "/static/stats.js?v=9",
   "/static/icon-192.png",
 ];
 

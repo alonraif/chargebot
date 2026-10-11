@@ -23,7 +23,8 @@ from .tokens import check_kiosk_key, make_token, read_token
 log = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
-PAGES = {"/": "index.html", "/dashboard": "index.html", "/kiosk": "kiosk.html", "/stats": "stats.html"}
+PAGES = {"/": "index.html", "/dashboard": "index.html", "/kiosk": "kiosk.html", "/stats": "stats.html",
+         "/guide": "guide.html", "/help": "guide.html"}
 # Served from the site root so the service worker can control every page.
 ROOT_FILES = {"/manifest.webmanifest": "manifest.webmanifest", "/sw.js": "sw.js"}
 mimetypes.add_type("application/manifest+json", ".webmanifest")

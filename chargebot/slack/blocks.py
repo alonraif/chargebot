@@ -351,6 +351,11 @@ HELP = (
     "Tip: open ChargeBot's *Home* tab for live status and one-tap buttons."
 )
 
+
+def help_text(cfg: Config) -> str:
+    guide = f"\n📖 Full guide, including installing the app: {cfg.public_base_url}/guide" if cfg.public_base_url else ""
+    return HELP + guide
+
 ADMIN_HELP = (
     "*Admin*\n"
     "• `/charge admin`: open the admin panel\n"

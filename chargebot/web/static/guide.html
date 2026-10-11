@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="referrer" content="no-referrer">
+  <title>Juice · How it works</title>
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0F0E17">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Juice">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/static/app.css?v=9">
+  <style>
+    .g-hero { text-align: center; padding: 8px 0 4px; }
+    .g-hero h1 { font-size: clamp(30px, 7vw, 46px); font-weight: 800; letter-spacing: -0.03em; line-height: 1.05; margin: 0 0 10px; }
+    .g-hero h1 em { font-style: normal; color: var(--pink); }
+    .g-hero p { color: var(--muted); font-size: 18px; margin: 0 auto; max-width: 520px; }
+    .g-cmd { font-family: var(--font-mono); font-weight: 700; background: var(--card-2); padding: 2px 8px; border-radius: 8px; white-space: nowrap; }
+    h2.g-h { font-size: 22px; font-weight: 800; letter-spacing: -0.02em; margin: 0 0 4px; }
+    .g-sub { color: var(--muted); margin: 0 0 16px; }
+
+    .g-steps { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 220px), 1fr)); }
+    .g-step { background: var(--card-2); border-radius: 14px; padding: 16px; border: 1.5px solid var(--line-soft); }
+    .g-step .n { width: 34px; height: 34px; border-radius: 50%; display: grid; place-items: center; font: 700 15px var(--font-mono);
+      background: var(--lime); color: var(--on-lime); border: var(--border-w) solid var(--line); margin-bottom: 10px; }
+    .g-step b { display: block; font-size: 17px; margin-bottom: 2px; }
+    .g-step span { color: var(--muted); font-size: 14px; }
+
+    .g-tabs { display: flex; gap: 6px; flex-wrap: wrap; margin-bottom: 14px; }
+    .g-tabs button { font: 700 14px var(--font-display); padding: 8px 14px; border-radius: 999px; cursor: pointer;
+      background: var(--card-2); color: var(--text); border: var(--border-w) solid var(--line); }
+    :root[data-theme="dark"] .g-tabs button, :root:not([data-theme="light"]) .g-tabs button { border: 1.5px solid #3A3956; }
+    .g-tabs button[aria-selected="true"] { background: var(--lime); color: var(--on-lime); }
+    .g-tabs button:focus-visible { outline: 3px solid var(--cyan); outline-offset: 2px; }
+    .g-panel[hidden] { display: none; }
+    ol.g-list { margin: 0; padding: 0; list-style: none; counter-reset: s; }
+    ol.g-list li { counter-increment: s; display: flex; gap: 12px; align-items: flex-start; padding: 10px 0; border-top: 1.5px solid var(--line-soft); }
+    ol.g-list li:first-child { border-top: 0; }
+    ol.g-list li::before { content: counter(s); flex: 0 0 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+      font: 700 13px var(--font-mono); background: var(--card-2); color: var(--text); }
+    .g-note { margin: 12px 0 0; font-size: 14px; color: var(--muted); }
+    .g-key { display: inline-block; font-weight: 800; padding: 1px 8px; border-radius: 6px; background: var(--card-2); white-space: nowrap; }
+
+    .g-timeline { position: relative; margin: 6px 0 0; padding: 0; list-style: none; }
+    .g-timeline li { position: relative; padding: 0 0 18px 64px; min-height: 44px; }
+    .g-timeline li::before { content: ""; position: absolute; left: 21px; top: 30px; bottom: -2px; width: 3px; background: var(--line-soft); border-radius: 2px; }
+    .g-timeline li:last-child::before { display: none; }
+    .g-timeline .t { position: absolute; left: 0; top: 0; width: 46px; height: 30px; border-radius: 999px; display: grid; place-items: center;
+      font: 700 12px var(--font-mono); background: var(--card-2); color: var(--text); }
+    .g-timeline .t.go { background: var(--lime); color: var(--on-lime); }
+    .g-timeline .t.warn { background: var(--sun); color: #16142B; }
+    .g-timeline .t.stop { background: var(--pink); color: var(--on-pink); }
+    .g-timeline b { display: block; }
+    .g-timeline span { color: var(--muted); font-size: 14px; }
+
+    .g-pair { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); }
+    .g-bullets { margin: 0; padding: 0; list-style: none; }
+    .g-bullets li { padding: 7px 0 7px 30px; position: relative; }
+    .g-bullets li::before { content: attr(data-i); position: absolute; left: 0; top: 6px; }
+    .g-cmds { display: grid; gap: 8px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 250px), 1fr)); }
+    .g-cmds div { display: flex; gap: 10px; align-items: baseline; padding: 10px 12px; background: var(--card-2); border-radius: 12px; }
+    .g-cmds .g-cmd { background: transparent; padding: 0; color: var(--accent-text); }
+    .g-cmds span { color: var(--muted); font-size: 14px; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="/"><span class="bolt" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path d="M13 2 5 13h5.5l-1 9L18 10.5h-5.5z" fill="currentColor"/></svg></span><span>Juice<span class="dot">.</span></span></a>
+      <nav class="nav" aria-label="Pages">
+        <a href="/">Now</a>
+        <a href="/stats">Stats</a>
+        <a href="/guide" aria-current="page">Guide</a>
+        <span class="seg" id="themeSeg" role="group" aria-label="Theme"></span>
+      </nav>
+    </header>
+
+    <main class="stack">
+      <section class="g-hero">
+        <h1>Charging, <em>without the chaos</em>.</h1>
+        <p>One charger, one fair line. ChargeBot tells you when it's your turn. You plug in, tap a button, and go.</p>
+      </section>
+
+      <section class="card" aria-labelledby="h-basics">
+        <h2 class="g-h" id="h-basics">The whole thing in 3 steps</h2>
+        <p class="g-sub">Type <span class="g-cmd">/charge</span> in any Slack channel to start.</p>
+        <div class="g-steps">
+          <div class="g-step"><div class="n">1</div><b>🙋 Get in line</b><span><span class="g-cmd">/charge</span> claims the charger, or puts you in the queue with an estimated time.</span></div>
+          <div class="g-step"><div class="n">2</div><b>🔌 Plug in and confirm</b><span>When it's your turn, plug in and tap <b style="display:inline">I'm plugged in</b> within 10 minutes.</span></div>
+          <div class="g-step"><div class="n">3</div><b>🏁 Unplug when done</b><span>You get 2 hours. Tap <b style="display:inline">I'm done</b> when you leave, so the next person goes sooner.</span></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-app">
+        <h2 class="g-h" id="h-app">📱 Get Juice on your phone</h2>
+        <p class="g-sub">Install the dashboard as an app: live countdown, one-tap buttons, and notifications when it's your turn.</p>
+        <div class="g-tabs" role="tablist" aria-label="Device">
+          <button role="tab" id="tab-iphone" aria-controls="p-iphone" aria-selected="true">iPhone</button>
+          <button role="tab" id="tab-android" aria-controls="p-android" aria-selected="false">Android</button>
+          <button role="tab" id="tab-computer" aria-controls="p-computer" aria-selected="false">Computer</button>
+        </div>
+
+        <div class="g-panel" id="p-iphone" role="tabpanel" aria-labelledby="tab-iphone">
+          <ol class="g-list">
+            <li><span>Open <b>chargebot-tliw.onrender.com</b> in <b>Safari</b>. It has to be Safari.</span></li>
+            <li><span>Tap <span class="g-key">Share ⬆︎</span> then <span class="g-key">Add to Home Screen</span>.</span></li>
+            <li><span>Open <b>Juice</b> from your Home Screen and tap <span class="g-key">Sign in</span>.</span></li>
+            <li><span>In Slack, open ChargeBot's <b>Home</b> tab and tap <span class="g-key">Get sign-in code</span>. Type the code into Juice.</span></li>
+            <li><span>Tap <span class="g-key">🔔 Turn on notifications</span> and allow them.</span></li>
+          </ol>
+          <p class="g-note">Notifications need iOS 16.4 or later, and only work in the Home Screen app, not in Safari.</p>
+        </div>
+
+        <div class="g-panel" id="p-android" role="tabpanel" aria-labelledby="tab-android" hidden>
+          <ol class="g-list">
+            <li><span>In Slack, open ChargeBot's <b>Home</b> tab and tap <span class="g-key">Open dashboard</span>. It opens signed in.</span></li>
+            <li><span>In Chrome, tap <span class="g-key">⋮</span> then <span class="g-key">Install app</span>, or the <span class="g-key">⬇ Install app</span> button at the top of the page.</span></li>
+            <li><span>Open <b>Juice</b> and tap <span class="g-key">🔔 Turn on notifications</span>.</span></li>
+          </ol>
+          <p class="g-note">Signed out in the app? Tap <b>Sign in</b> and use a code from ChargeBot's Home tab in Slack.</p>
+        </div>
+
+        <div class="g-panel" id="p-computer" role="tabpanel" aria-labelledby="tab-computer" hidden>
+          <ol class="g-list">
+            <li><span>In Slack, open ChargeBot's <b>Home</b> tab and click <span class="g-key">Open dashboard</span>.</span></li>
+            <li><span>In Chrome or Edge, click <span class="g-key">⬇ Install app</span> at the top of the page, or the install icon in the address bar.</span></li>
+            <li><span>Click <span class="g-key">🔔 Turn on notifications</span>. The buttons on them (like <i>I'm plugged in</i>) work without opening the app.</span></li>
+          </ol>
+        </div>
+        <p class="g-note">Each device stays signed in for 90 days. Lost a phone? Use <b>Sign out everywhere</b> in ChargeBot's Home tab.</p>
+      </section>
+
+      <section class="card" aria-labelledby="h-turn">
+        <h2 class="g-h" id="h-turn">⏱️ When it's your turn</h2>
+        <p class="g-sub">You get a DM (and a notification, if they're on). Here's the clock:</p>
+        <ol class="g-timeline">
+          <li><span class="t go">0:00</span><b>The charger is yours</b><span>Plug in and tap <b style="display:inline">I'm plugged in</b>. Can't make it? Tap <b style="display:inline">Skip</b>.</span></li>
+          <li><span class="t warn">5 min</span><b>Your 2-hour clock starts</b><span>Even if you haven't confirmed yet. You get a reminder.</span></li>
+          <li><span class="t warn">8 min</span><b>Last call</b><span>The next person gets a heads-up that they might be up.</span></li>
+          <li><span class="t stop">10 min</span><b>Turn passes</b><span>No confirmation, so the next person gets it. If nobody's waiting, you can tap <b style="display:inline">Reclaim</b>.</span></li>
+        </ol>
+      </section>
+
+      <div class="g-pair">
+        <section class="card" aria-labelledby="h-during">
+          <h2 class="g-h" id="h-during">⚡ While you charge</h2>
+          <ul class="g-bullets">
+            <li data-i="⏳">A heads-up <b>10 minutes</b> before the end.</li>
+            <li data-i="🏁">Leaving early? Tap <b>I'm done</b> and the next person is told right away.</li>
+            <li data-i="➕">Nobody waiting? <b>Extend</b> by 30 minutes, up to twice.</li>
+          </ul>
+        </section>
+        <section class="card" aria-labelledby="h-end">
+          <h2 class="g-h" id="h-end">🏁 Time's up</h2>
+          <ul class="g-bullets">
+            <li data-i="🚗">Unplug, move your car, and tap <b>I've unplugged</b>.</li>
+            <li data-i="🔔">Someone's car still there when it's your turn? Tap <b>Nudge</b> and they get a polite ping.</li>
+            <li data-i="📅">Want a calendar reminder by email? Turn it on in ChargeBot's Home tab.</li>
+          </ul>
+        </section>
+      </div>
+
+      <section class="card" aria-labelledby="h-cmds">
+        <h2 class="g-h" id="h-cmds">⌨️ Commands</h2>
+        <p class="g-sub">You probably only need the first one. Replies are only visible to you.</p>
+        <div class="g-cmds">
+          <div><span class="g-cmd">/charge</span><span>claim or get in line</span></div>
+          <div><span class="g-cmd">/charge status</span><span>who's charging, who's next</span></div>
+          <div><span class="g-cmd">/charge done</span><span>end your session</span></div>
+          <div><span class="g-cmd">/charge skip</span><span>pass your turn</span></div>
+          <div><span class="g-cmd">/charge leave</span><span>leave the queue</span></div>
+          <div><span class="g-cmd">/charge extend</span><span>30 more minutes</span></div>
+          <div><span class="g-cmd">/charge login</span><span>sign-in code for the app</span></div>
+          <div><span class="g-cmd">/charge help</span><span>the full list</span></div>
+        </div>
+      </section>
+
+      <section class="card" aria-labelledby="h-manners">
+        <h2 class="g-h" id="h-manners">🤝 Good charging manners</h2>
+        <ul class="g-bullets">
+          <li data-i="⚡">Confirm quickly, and skip if your plans change.</li>
+          <li data-i="🚗">Move your car when your time's up, even if it isn't full.</li>
+          <li data-i="🏁">Tap <b>I'm done</b> when you leave early. Someone's waiting.</li>
+        </ul>
+      </section>
+    </main>
+    <footer class="foot">Questions or something stuck? Ask in <b>#liveu-electric-cars</b>. <a href="/">Back to the live dashboard</a></footer>
+  </div>
+  <script src="/static/app.js?v=9"></script>
+  <script>
+    (function () {
+      CB.initTheme("auto");
+      const tabs = Array.from(document.querySelectorAll('[role="tab"]'));
+      function select(tab) {
+        for (const t of tabs) {
+          const on = t === tab;
+          t.setAttribute("aria-selected", String(on));
+          t.tabIndex = on ? 0 : -1;
+          document.getElementById(t.getAttribute("aria-controls")).hidden = !on;
+        }
+      }
+      tabs.forEach((t, i) => {
+        t.addEventListener("click", () => select(t));
+        t.addEventListener("keydown", (e) => {
+          if (e.key !== "ArrowRight" && e.key !== "ArrowLeft") return;
+          const next = tabs[(i + (e.key === "ArrowRight" ? 1 : tabs.length - 1)) % tabs.length];
+          select(next);
+          next.focus();
+        });
+      });
+      // Open the steps for the device that's reading this.
+      const ua = navigator.userAgent;
+      const android = /Android/.test(ua);
+      const iOS = !android && (/iPad|iPhone|iPod/.test(ua) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1));
+      select(document.getElementById(android ? "tab-android" : iOS ? "tab-iphone" : "tab-computer"));
+    })();
+  </script>
+</body>
+</html>

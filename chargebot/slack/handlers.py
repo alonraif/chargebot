@@ -81,7 +81,7 @@ def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: U
             return
 
         if sub == "help":
-            text = B.HELP + ("\n\n" + B.ADMIN_HELP if cfg.is_admin(user) else "")
+            text = B.help_text(cfg) + ("\n\n" + B.ADMIN_HELP if cfg.is_admin(user) else "")
             respond(text=text, blocks=[B.section(text)])
             return
 

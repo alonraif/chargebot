@@ -66,7 +66,7 @@ def test_tokens_round_trip_and_reject_tampering():
 
 def test_pages_and_health(server):
     h, base = server
-    for path in ("/", "/dashboard", "/kiosk", "/stats", "/static/app.js", "/static/app.css"):
+    for path in ("/", "/dashboard", "/kiosk", "/stats", "/guide", "/help", "/static/app.js", "/static/app.css"):
         status, _, headers = get(base + path)
         assert status == 200, path
         assert headers.get("Referrer-Policy") == "no-referrer"
