@@ -233,7 +233,7 @@
     if (!node) return;
     const stale = age > 20;
     node.classList.toggle("stale", stale);
-    const text = age === Infinity ? "Connecting…" : stale ? "Reconnecting…" : `Live · ${Math.round(age)}s ago`;
+    const text = age === Infinity ? "Loading…" : stale ? "Reconnecting…" : `Live · ${Math.round(age)}s ago`;
     node.replaceChildren(CB.el("i"), text);
   };
 

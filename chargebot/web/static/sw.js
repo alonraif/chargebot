@@ -1,9 +1,9 @@
 /* Service worker: makes the dashboard installable and lets the app shell open without a connection.
    Pages and assets are fetched fresh when online (network first); live data (/api) is never cached. */
-const CACHE = "juice-v6";
+const CACHE = "juice-v7";
 const SHELL = [
   "/", "/stats",
-  "/static/app.css?v=6", "/static/app.js?v=6", "/static/dashboard.js?v=6", "/static/stats.js?v=6",
+  "/static/app.css?v=7", "/static/app.js?v=7", "/static/dashboard.js?v=7", "/static/stats.js?v=7",
   "/static/icon-192.png",
 ];
 
@@ -19,23 +19,67 @@ self.addEventListener("activate", (event) => {
   );
 });
 
+const NETWORK_WAIT_MS = 3000;
+
+const OFFLINE_PAGE = `<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><title>Juice · Offline</title>
+<style>body{margin:0;min-height:100vh;display:grid;place-items:center;background:#0F0E17;color:#FFFFFE;
+font:16px/1.5 system-ui,sans-serif;text-align:center;padding:24px}b{font-size:22px}p{color:#A7A5C6}
+i{display:inline-block;width:56px;height:56px;border-radius:16px;background:#C6FF3D;color:#16142B;
+font:800 32px/56px system-ui;font-style:normal;margin-bottom:12px}</style></head><body><div><i>⚡</i><br>
+<b>You're offline</b><p>Juice will reconnect as soon as you're back online.</p></div>
+<script>addEventListener("online",()=>location.reload());setInterval(()=>navigator.onLine&&location.reload(),5000)</script>
+</body></html>`;
+
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+/* A phone waking up often has no network for a moment: try twice before giving up. */
+async function fetchWithRetry(request) {
+  try {
+    return await fetch(request);
+  } catch (e) {
+    await sleep(700);
+    return fetch(request);
+  }
+}
+
+async function remember(key, response) {
+  if (response && response.ok) {
+    const cache = await caches.open(CACHE);
+    await cache.put(key, response.clone());
+  }
+  return response;
+}
+
+async function page(request, key) {
+  const network = fetchWithRetry(request).then((response) => remember(key, response));
+  const cached = await caches.match(key);
+  if (!cached) {
+    try {
+      return await network;
+    } catch (e) {
+      return new Response(OFFLINE_PAGE, { headers: { "Content-Type": "text/html; charset=utf-8" } });
+    }
+  }
+  // Fresh page if the network answers quickly, otherwise the saved copy; never the browser's error page.
+  const timeout = sleep(NETWORK_WAIT_MS).then(() => cached);
+  return Promise.race([network.catch(() => cached), timeout]);
+}
+
+async function asset(request) {
+  try {
+    return await remember(request, await fetchWithRetry(request));
+  } catch (e) {
+    return (await caches.match(request)) || Response.error();
+  }
+}
+
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
   if (event.request.method !== "GET" || url.origin !== location.origin) return;
   if (url.pathname.startsWith("/api/") || url.pathname === "/healthz" || url.pathname.startsWith("/kiosk")) return;
-  event.respondWith(
-    fetch(event.request)
-      .then((response) => {
-        if (response.ok) {
-          const copy = response.clone();
-          // Cache pages without their query string, so a sign-in link doesn't get stored.
-          const key = event.request.mode === "navigate" ? url.pathname : event.request;
-          caches.open(CACHE).then((cache) => cache.put(key, copy));
-        }
-        return response;
-      })
-      .catch(() => caches.match(event.request.mode === "navigate" ? url.pathname : event.request)),
-  );
+  // Pages are saved without their query string, so a sign-in link never gets stored.
+  event.respondWith(event.request.mode === "navigate" ? page(event.request, url.pathname) : asset(event.request));
 });
 
 /* Push notifications. The payload carries the text, optional action buttons, and a short-lived

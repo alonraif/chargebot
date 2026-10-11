@@ -191,6 +191,8 @@ a { color: inherit; }
 .btn.install { padding: 6px 12px; font-size: 13px; box-shadow: none; }
 #signin:not(:empty) { margin-bottom: 16px; }
 #notify:not(:empty) { margin-top: 16px; }
+.sk-line { height: 14px; border-radius: 8px; background: var(--card-2); animation: pulse 1.4s ease-in-out infinite; }
+@keyframes pulse { 50% { opacity: .45; } }
 .notify-line { text-align: center; font-size: 14px; color: var(--muted); }
 .signin h2 { font-size: 20px; font-weight: 800; margin: 0 0 6px; }
 .signin input {

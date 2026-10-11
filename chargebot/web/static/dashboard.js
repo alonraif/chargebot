@@ -281,6 +281,7 @@
     const signOut = el("a", { href: "#", text: "Sign out", onclick: (e) => {
       e.preventDefault();
       CB.signOut();
+      CB.store.remove("localStorage", "cb-last");
       lastKey = "";
       refresh();
     } });
@@ -299,9 +300,16 @@
     CB.tickLive();
   }
 
+  // Show the last known status right away, so opening the app never starts from a blank page.
+  try {
+    const last = JSON.parse(CB.store.get("localStorage", "cb-last") || "null");
+    if (last && last.chargers) render(last);
+  } catch (e) { /* ignore a bad saved copy */ }
+
   async function load() {
     await signingIn;
     const state = await CB.getJSON("/api/state");
+    CB.store.set("localStorage", "cb-last", JSON.stringify(state));
     if (CB.token && !state.me) {
       // The pass expired or was signed out from Slack.
       CB.signOut();
