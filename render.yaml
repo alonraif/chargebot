@@ -1,0 +1,29 @@
+# Render Blueprint describing the service. It only takes effect if you connect it as a Blueprint;
+# an existing service keeps its own dashboard settings.
+services:
+  - type: web
+    name: chargebot
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python chargingbot.py
+    healthCheckPath: /healthz
+    envVars:
+      - key: PYTHON_VERSION
+        value: "3.12.7"
+      - key: SLACK_BOT_TOKEN
+        sync: false
+      - key: SLACK_APP_TOKEN
+        sync: false
+      - key: STATE_CHANNEL_ID
+        sync: false
+      - key: STATUS_CHANNEL_ID
+        sync: false
+      - key: ADMIN_USER_IDS
+        sync: false
+      - key: PUBLIC_BASE_URL
+        sync: false
+      - key: WEB_SECRET
+        generateValue: true
+      - key: KIOSK_KEY
+        generateValue: true

@@ -1,147 +1,129 @@
-# EV Charger Slack Bot & Dashboard
+# ChargeBot ⚡
 
-This project provides a Slack bot for managing a shared EV charger, plus a small web dashboard for current status and queue visibility. Users interact through Slack commands to claim the charger, join the queue, check status, leave the queue, or end a session early.
+A Slack bot and web dashboard for sharing the office EV charger fairly. People get in line with one command or one tap, get a DM when it's their turn, confirm they've plugged in, and get reminded when time's up. Nobody holds the charger without showing up.
 
-## Features
+## How it works for people
 
-- Slack commands:
-  `/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargestatus`
-- Session management:
-  configurable 120-minute charging window, 5-minute grace period, start/end notifications, 10-minute warning, and automatic queue promotion
-- Disconnect reminder invite:
-  when a session starts, the bot can email a `.ics` calendar invite scheduled for the expected end of the session
-- Dashboard:
-  `/dashboard` shows live charger state and queue
-- JSON API:
-  `/status` exposes charger state, queue state, and reminder-invite state
-- Health check:
-  `/` returns a simple alive response
+- **`/charge`**: claim the charger if it's free, otherwise join the queue. Every reply is visible only to you, in any channel.
+- **Your turn**: you get a DM with **I'm plugged in** and **Skip my turn**. Confirm within **10 minutes** or you lose your turn. Your 120-minute clock starts when you confirm, or after the 5-minute grace period at the latest. You get alerts at 5 and 8 minutes, and the next person gets a heads-up before the queue moves.
+- **While charging**: 10 minutes before the end you get **I'm done** and, if nobody's waiting, **Extend 30 min**.
+- **Time's up**: the next person is offered the charger right away. If your car is still plugged in, they can tap **Nudge** to ask you politely.
+- **Missed your turn with nobody waiting?** Tap **Reclaim** to get it back.
+- **App Home**: open ChargeBot in Slack and pick the **Home** tab for live status, one-tap buttons, your stats, and a calendar-reminder toggle.
+- **Live status**: one pinned message in the status channel, edited in place.
+- **Shortcut**: search "EV Charger" in Slack's shortcuts menu for a status and actions panel. It works well on mobile.
 
-## Technology
+Other subcommands: `/charge status`, `/charge done`, `/charge skip`, `/charge leave`, `/charge extend`, `/charge help`.
+The old commands (`/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargestatus`) still work.
 
-- Python 3
-- Slack Bolt for Python
-- Standard library `http.server`
-- Gmail API over HTTPS plus standard library email helpers
-- Vanilla HTML/CSS/JavaScript for the dashboard
+**Admins** (listed in `ADMIN_USER_IDS`): `/charge admin` opens a panel to end a session, reorder or remove people in the queue, and mark the charger out of order. `/charge admin out <reason>` and `/charge admin back` do the same from the command line.
 
-## Prerequisites
+## Web pages
 
-- Python 3.7+
-- `pip`
-- A Slack workspace where you can create and install an app
-- A Gmail account plus Gmail API OAuth credentials if you want disconnect reminder invites
+| Page | What it is |
+|---|---|
+| `/` (also `/dashboard`) | Live dashboard. Opened from a Slack DM link, it shows your own buttons, including confirming from your phone. |
+| `/kiosk` | TV mode for a screen near the charger. `/kiosk?k=<KIOSK_KEY>` adds a big **I'm plugged in** button for whoever's turn it is. |
+| `/stats` | Totals only: sessions per day, average wait, no-show rate, busiest hours. |
+| `/healthz` | `200` when Slack is connected and the clock loop is running, `503` otherwise. Point the keep-alive cron here. |
+| `/api/state`, `/api/stats` | JSON behind the pages. No Slack IDs or emails. |
 
-## Setup
+Personal dashboard links are signed with `WEB_SECRET` and expire after 24 hours.
 
-1. Clone the repository.
-   ```bash
-   git clone <your-repository-url>
-   cd chargebot
-   ```
+## Rolling out the new version
 
-2. Create and configure a Slack app.
-   Enable Socket Mode.
-   Create an app-level token with `connections:write` and use it as `SLACK_APP_TOKEN`.
-   Add bot token scopes:
-   `chat:write`, `commands`, `users:read`, `users:read.email`
-   Install or reinstall the app to the workspace and use the bot token as `SLACK_BOT_TOKEN`.
-   Register these slash commands:
-   `checkin`, `request`, `endcharge`, `exitqueue`, `chargestatus`
+### Stage 1: Slack changes that are safe before deploying
 
-3. Configure environment variables.
-   The repository includes a sample file at `.env.example`.
-   The app reads directly from `os.environ`.
+At api.slack.com/apps, open the ChargeBot app.
 
-   ```bash
-   SLACK_BOT_TOKEN="xoxb-your-bot-token"
-   SLACK_APP_TOKEN="xapp-your-app-level-token"
-   GMAIL_CLIENT_ID="your-google-oauth-client-id"
-   GMAIL_CLIENT_SECRET="your-google-oauth-client-secret"
-   GMAIL_REFRESH_TOKEN="your-gmail-refresh-token"
-   GMAIL_TOKEN_URI="https://oauth2.googleapis.com/token"
-   GMAIL_FROM_EMAIL="liveuevcharger@gmail.com"
-   # PORT=8080
-   ```
+1. **Settings → App Manifest**: copy the current YAML somewhere as a backup.
+2. **OAuth & Permissions → Bot Token Scopes**: add `groups:history` and `pins:write`.
+3. Click **Reinstall to Workspace** in the banner. Check that the Bot User OAuth Token is unchanged; if it changed, update `SLACK_BOT_TOKEN` on Render.
+4. **App Home**: turn on **Home Tab**.
+5. **Event Subscriptions**: turn on, subscribe to the bot event `app_home_opened`, and save.
+6. **Interactivity & Shortcuts**: turn on and save.
+7. Create a private channel `#chargebot-state` and invite the bot. Invite the bot to the status channel too.
+8. Collect each admin's member ID: their profile → **⋮** → **Copy member ID**.
 
-   These values come from your Google Cloud OAuth setup for the Gmail API. `GMAIL_REFRESH_TOKEN` should be generated by authorizing the Gmail account you want the bot to send from.
+### Stage 2: deploy
 
-   On Render, store these values in the service Environment settings rather than in Git.
+On Render, open the service, go to **Environment**, and add these variables. Then commit and deploy.
 
-4. Install dependencies.
-   ```bash
-   python3 -m venv venv
-   source venv/bin/activate
-   pip install -r requirements.txt
-   ```
+| Variable | Value |
+|---|---|
+| `STATE_CHANNEL_ID` | `C0C8H4UAK1S` (`#chargebot-state`) |
+| `STATUS_CHANNEL_ID` | `C08RLHL052Q` (`#liveu-electric-cars`) |
+| `ADMIN_USER_IDS` | comma-separated member IDs |
+| `PUBLIC_BASE_URL` | `https://chargebot-tliw.onrender.com` |
+| `WEB_SECRET` | a long random string, for example from `python3 -c "import secrets;print(secrets.token_urlsafe(32))"` |
+| `KIOSK_KEY` | another random string |
 
-5. Run the bot.
-   ```bash
-   python3 chargingbot.py
-   ```
+The start command can stay `python chargingbot.py`, and the build command stays `pip install -r requirements.txt`.
 
-6. Open the dashboard.
-   Visit `http://localhost:8080/dashboard` or the configured `PORT`.
+### Stage 3: right after the deploy
 
-## Reminder Invite Behavior
+1. **Slash Commands → Create New Command**: `/charge`, description "Get in line for the EV charger", usage hint `[status | done | leave | skip | extend | help]`.
+2. **Interactivity & Shortcuts → Create New Shortcut → Global**: name "EV Charger", callback ID `ev_charger_open`.
+3. Optionally, rename the old commands' descriptions to "Old, use /charge".
+4. Point the keep-alive cron at `/healthz` so it also alerts on outages.
 
-The disconnect reminder is sent when the bot marks a charging session as started, not when the user runs `/checkin`.
+`slack-manifest.yaml` describes the finished configuration. Use it to create a separate dev app, or to restore the app. Pasting it replaces the whole configuration.
 
-- Session start is the moment the app sets `session_actual_charge_start_time`
-- The calendar event starts at `session_actual_charge_start_time + CHARGE_DURATION`
-- The event lasts 5 minutes
-- The invite is sent once per session
-- If Gmail API is not configured, Slack has no email for the user, or delivery fails, charging flow continues normally and the result is only logged and exposed in `/status`
+## Configuration
 
-## Usage
+See [.env.example](.env.example) for every setting. Timing is in minutes: `CHARGE_MIN`, `GRACE_MIN`, `CONFIRM_MIN`, `CONFIRM_ALERT_AT_MIN`, `WARN_BEFORE_END_MIN`, `EXTEND_MIN`, `MAX_EXTENSIONS`, `NEXT_UP_HEADS_UP_MIN` and `NUDGE_COOLDOWN_MIN`.
 
-- `/checkin`
-  Claims a free charger and starts the 5-minute grace period.
-- `/request`
-  Claims the charger if free, otherwise joins the queue.
-- `/endcharge`
-  Ends the active session early and promotes the next queued user if present.
-- `/exitqueue`
-  Removes the user from the queue.
-- `/chargestatus`
-  Shows active user, grace/charge timing, and queue state.
+**Adding a second charger:** set `CHARGERS="Charger 1,Charger 2"` (any names) and redeploy. There's one shared queue, and the next person gets whichever charger frees up first. With one charger, names never appear anywhere.
 
-## `/status` Response
+### Where state lives
 
-The `/status` endpoint includes reminder-invite fields for the active session:
+Render's free tier has no disk, so the bot keeps its memory in the private Slack channel `STATE_CHANNEL_ID`:
 
-- `disconnect_reminder_invite_uid`
-- `disconnect_reminder_invite_sent`
-- `disconnect_reminder_invite_status`
-- `disconnect_reminder_invite_error`
+- One message whose hidden metadata holds the current state. It's edited on every change. **Don't delete or edit it.**
+- One short message per finished session, which doubles as an audit log and feeds the stats.
 
-Possible `disconnect_reminder_invite_status` values:
+On restart the bot reads them back and carries on, and missed deadlines fire once. Without `STATE_CHANNEL_ID` (or `STATE_FILE` locally), the state is kept in memory only.
 
-- `idle`
-- `pending`
-- `sent`
-- `skipped_no_gmail_api`
-- `skipped_no_email`
-- `failed`
+### Calendar reminders (optional)
 
-## Project Structure
+When a session is confirmed, the bot emails a calendar invite timed for the end of the session. The invite is cancelled if the session ends early and updated if it's extended. People can turn it off in App Home. Set the `GMAIL_*` variables to enable it. In Google Cloud, set the OAuth consent screen to **In production**: in "Testing" mode, refresh tokens expire after 7 days.
 
-```text
-.
-├── chargingbot.py
-├── dashboard.html
-├── requirements.txt
-├── .env.example
-└── README.md
+## Development
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements-dev.txt
+pytest -q
+ruff check chargebot tests chargingbot.py
 ```
 
-## Logging
+**Preview the dashboard with fake data, no Slack needed.** The command prints personal and kiosk links:
 
-The app logs to standard output at `INFO` level with timestamps, thread name, and error details. This is the main source for operational troubleshooting.
+```bash
+python -m chargebot.devserver --port 8080
+```
 
-## Customization
+**Run the real bot against a dev Slack app**, keeping state in a local file:
 
-- Update `CHARGE_DURATION`, `GRACE_PERIOD`, and `TEN_MINUTE_WARNING_BEFORE_END` in `chargingbot.py`
-- Change the HTTP port with `PORT`
-- Modify `dashboard.html` for dashboard styling
-- Leave Gmail API variables unset if you want the bot to run without reminder invite delivery
+```bash
+STATE_FILE=dev.state.json python -m chargebot
+```
+
+### Layout
+
+```text
+chargebot/
+  domain.py        pure state machine: queue, sessions, deadlines (no I/O; fully unit-tested)
+  engine.py        owns the state; applies rules under a lock, then saves and sends effects outside it
+  scheduler.py     one clock loop that drives every deadline
+  config.py        settings from environment variables
+  stats.py         usage statistics from the session log
+  store/           persistence: Slack channel, local file, memory
+  slack/           handlers (commands, buttons, Home, shortcut, admin), message copy, notifier, user cache
+  reminders/       Gmail calendar invites
+  web/             HTTP server, signed links, static pages (Volt theme, light and dark)
+  devserver.py     dashboard preview with fake data
+chargingbot.py     compatibility entry point (python chargingbot.py)
+tests/             domain timelines, Slack handlers against a fake Slack, web API, store and stats
+```

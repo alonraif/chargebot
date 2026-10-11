@@ -1,0 +1,33 @@
+[project]
+name = "chargebot"
+version = "2.0.0"
+description = "Slack bot and dashboard for sharing an office EV charger."
+readme = "README.md"
+requires-python = ">=3.9"
+dependencies = [
+    "slack_bolt==1.28.0",
+    "slack_sdk==3.43.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8", "ruff>=0.6"]
+
+[project.scripts]
+chargebot = "chargebot.__main__:main"
+
+[tool.setuptools.packages.find]
+include = ["chargebot*"]
+
+[tool.setuptools.package-data]
+chargebot = ["web/static/*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 120
+target-version = "py39"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+ignore = ["B008"]

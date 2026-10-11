@@ -1,0 +1,58 @@
+# Slack app manifest for ChargeBot. Paste into api.slack.com/apps -> your app -> App Manifest,
+# or use it to create a separate dev app. Pasting REPLACES the whole app config, so for the
+# production app follow the staged rollout in README.md instead.
+display_information:
+  name: ChargeBot
+  description: Share the office EV charger without the chaos.
+  background_color: "#16142b"
+features:
+  app_home:
+    home_tab_enabled: true
+    messages_tab_enabled: true
+    messages_tab_read_only_enabled: true
+  bot_user:
+    display_name: ChargeBot
+    always_online: true
+  shortcuts:
+    - name: EV Charger
+      type: global
+      callback_id: ev_charger_open
+      description: Charger status and actions
+  slash_commands:
+    - command: /charge
+      description: Get in line for the EV charger
+      usage_hint: "[status | done | leave | skip | extend | help]"
+      should_escape: false
+    - command: /checkin
+      description: Old, use /charge
+      should_escape: false
+    - command: /request
+      description: Old, use /charge
+      should_escape: false
+    - command: /endcharge
+      description: Old, use /charge done
+      should_escape: false
+    - command: /exitqueue
+      description: Old, use /charge leave
+      should_escape: false
+    - command: /chargestatus
+      description: Old, use /charge status
+      should_escape: false
+oauth_config:
+  scopes:
+    bot:
+      - commands
+      - chat:write
+      - users:read
+      - users:read.email
+      - groups:history
+      - pins:write
+settings:
+  event_subscriptions:
+    bot_events:
+      - app_home_opened
+  interactivity:
+    is_enabled: true
+  org_deploy_enabled: false
+  socket_mode_enabled: true
+  token_rotation_enabled: false

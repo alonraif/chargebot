@@ -1,2 +1,27 @@
+# Secrets
 .env
+
+# Python
 __pycache__/
+*.pyc
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# Old in-repo virtualenv (do not commit)
+/bin/
+/lib/
+/include/
+/pyvenv.cfg
+
+# Local state when running with STATE_FILE
+*.state.json
+*.state.json.*
+
+# Editors and local tools
+.idea/
+.vscode/
+.DS_Store
+.claude/launch.json
