@@ -193,7 +193,7 @@ a { color: inherit; }
 #notify:not(:empty) { margin-top: 16px; }
 .sk-line { height: 14px; border-radius: 8px; background: var(--card-2); animation: pulse 1.4s ease-in-out infinite; }
 @keyframes pulse { 50% { opacity: .45; } }
-.notify-line { text-align: center; font-size: 14px; color: var(--muted); }
+#notify-inline:not(:empty)::before { content: " · "; }
 .signin h2 { font-size: 20px; font-weight: 800; margin: 0 0 6px; }
 .signin input {
   font: 700 26px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; text-align: center;

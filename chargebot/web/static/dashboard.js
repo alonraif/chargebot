@@ -10,6 +10,7 @@
   const signinBox = document.getElementById("signin");
   const signinBtn = document.getElementById("signinBtn");
   const notifyBox = document.getElementById("notify");
+  const notifyInline = document.getElementById("notify-inline");
   let notifyKey = "";
   let lastKey = "";
   let busy = false;
@@ -108,25 +109,28 @@
     if (key === notifyKey) return;
     notifyKey = key;
 
+    // The short on/off states sit on the footer line next to "Signed in as"; only the prompt is a card.
+    notifyBox.replaceChildren();
+    notifyInline.replaceChildren();
     if (support === "ok" && sub) {
-      notifyBox.replaceChildren(el("p", { class: "notify-line" }, "🔔 Notifications are on for this device. ",
+      notifyInline.replaceChildren("🔔 Notifications on · ",
         el("a", { href: "#", text: "Turn off", onclick: async (e) => {
           e.preventDefault();
           await CB.disablePush().catch(() => null);
           CB.toast("Notifications off for this device.");
           notifyKey = "";
           renderNotify(state);
-        } })));
+        } }));
       return;
     }
     if (dismissed || support === "off" || support === "unsupported") {
-      notifyBox.replaceChildren(dismissed && support === "ok"
-        ? el("p", { class: "notify-line" }, el("a", { href: "#", text: "🔔 Turn on notifications", onclick: (e) => {
+      notifyInline.replaceChildren(dismissed && support === "ok"
+        ? el("a", { href: "#", text: "🔔 Turn on notifications", onclick: (e) => {
             e.preventDefault();
             CB.store.remove("localStorage", "cb-push-dismissed");
             notifyKey = "";
             renderNotify(state);
-          } }))
+          } })
         : "");
       return;
     }
@@ -286,7 +290,7 @@
       refresh();
     } });
     foot.replaceChildren(state.me
-      ? el("span", {}, `Signed in as ${state.me.person.name} on this device. `, signOut)
+      ? el("span", {}, `Signed in as ${state.me.person.name} on this device · `, signOut)
       : el("span", {},
           CB.linkStatus === "rejected" || CB.linkStatus === "shown"
             ? el("b", { text: "That Slack link has expired or is no longer valid. " })
