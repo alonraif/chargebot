@@ -169,6 +169,13 @@ def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: U
         engine.set_pref(user, "email_reminder", on)
         notifier.publish_home(user, notice="📅 Calendar reminders " + ("on." if on else "off."))
 
+    @app.action(B.A_SIGNOUT_ALL)
+    def signout_all(ack, body):
+        ack()
+        user = body["user"]["id"]
+        engine.set_pref(user, "token_gen", int(engine.pref(user, "token_gen", 0)) + 1)
+        notifier.publish_home(user, notice="🔑 Signed out of the dashboard on every device.")
+
     # -- App Home and shortcut --------------------------------------------------------
 
     @app.event("app_home_opened")

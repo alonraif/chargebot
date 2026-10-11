@@ -24,6 +24,7 @@ A_RECLAIM = "cb_reclaim"
 A_STATUS = "cb_status"
 A_LINK = "cb_link"
 A_PREF_EMAIL = "cb_pref_email"
+A_SIGNOUT_ALL = "cb_signout_all"
 A_ADMIN_OPEN = "cb_admin_open"
 A_ADMIN_END = "cb_admin_end"
 A_ADMIN_OOO = "cb_admin_ooo"
@@ -443,6 +444,13 @@ def home_view(state: State, now: float, cfg: Config, names: Names, viewer: str, 
         blocks.append(section(
             "📅 *Calendar reminder by email* when your session starts: " + ("*on*" if email_on else "*off*"),
             button("Turn off" if email_on else "Turn on", A_PREF_EMAIL, value="off" if email_on else "on")))
+    if cfg.public_base_url:
+        blocks.append(section(
+            f"🔑 *Dashboard sign-in:* the dashboard remembers you on each phone or computer for "
+            f"{cfg.device_link_days} days.",
+            button("Sign out everywhere", A_SIGNOUT_ALL, confirm=confirm_dialog(
+                "Sign out everywhere?", "Every dashboard you've opened from Slack will need a fresh link.",
+                "Sign out"))))
     if stats["sessions"]:
         blocks.append(context(
             f"Your stats: {plural(stats['sessions'], 'session', 'sessions')} · "

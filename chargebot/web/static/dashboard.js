@@ -3,12 +3,14 @@
   "use strict";
   const { el } = CB;
   CB.initTheme("auto");
-  const token = CB.takeParam("t");
+  const signingIn = CB.signIn();
   const main = document.getElementById("main");
   const foot = document.getElementById("foot");
   const banner = document.getElementById("banner");
   let lastKey = "";
   let busy = false;
+  let expired = false;
+  let chargerFree = false;
 
   const LABELS = {
     confirm: ["⚡ I'm plugged in", "primary"],
@@ -23,7 +25,8 @@
   };
 
   function actionButton(action) {
-    const [label, style] = LABELS[action];
+    let [label, style] = LABELS[action];
+    if (action === "join" && chargerFree) label = "🔌 Claim the charger";
     return el("button", {
       type: "button", class: "btn " + style, text: label,
       onclick: async (event) => {
@@ -31,7 +34,7 @@
         busy = true;
         event.currentTarget.disabled = true;
         try {
-          const res = await CB.post({ action, t: token });
+          const res = await CB.post({ action });
           CB.toast(CB.message(res.code, res.ok));
         } catch (e) {
           CB.toast("Couldn't reach ChargeBot. Try again.");
@@ -130,6 +133,7 @@
     const key = JSON.stringify([state.version, state.me, state.chargers.map((c) => c.phase)]);
     if (key === lastKey) return;
     lastKey = key;
+    chargerFree = state.chargers.some((c) => c.phase === "free") && !state.queue.length;
 
     const actions = (state.me && state.me.actions) || [];
     const mine = state.chargers.find((c) => c.user && c.user.is_me && c.phase === "offered");
@@ -150,15 +154,32 @@
     nodes.push(queueCard(state));
     main.replaceChildren(...nodes);
 
+    const signOut = el("a", { href: "#", text: "Sign out", onclick: (e) => {
+      e.preventDefault();
+      CB.signOut();
+      lastKey = "";
+      refresh();
+    } });
     foot.replaceChildren(state.me
-      ? "Signed in from your Slack link. It works for 24 hours."
-      : el("span", {}, "Want in? Type ", el("b", { class: "mono", text: "/charge" }), " in Slack",
-          state.slack_url ? el("span", {}, " or ", el("a", { href: state.slack_url, text: "open ChargeBot" })) : null, "."));
+      ? el("span", {}, `Signed in as ${state.me.person.name} on this device. `, signOut)
+      : el("span", {},
+          expired ? "Your sign-in expired. " : "",
+          "Open the dashboard from ChargeBot in Slack to get your buttons here, or type ",
+          el("b", { class: "mono", text: "/charge" }), " in Slack",
+          state.slack_url ? el("span", {}, " (", el("a", { href: state.slack_url, text: "open ChargeBot" }), ")") : null,
+          "."));
     CB.tickLive();
   }
 
   async function load() {
-    render(await CB.getJSON("/api/state", { t: token }));
+    await signingIn;
+    const state = await CB.getJSON("/api/state");
+    if (CB.token && !state.me) {
+      // The pass expired or was signed out from Slack.
+      CB.signOut();
+      expired = true;
+    }
+    render(state);
   }
 
   const refresh = CB.poll(load, 5000, (age) => {

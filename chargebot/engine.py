@@ -153,6 +153,10 @@ class Engine:
         with self._lock:
             return copy.deepcopy(self.state), self.clock()
 
+    def pref(self, user_id: str, key: str, default: Any = None) -> Any:
+        with self._lock:
+            return self.state.prefs.get(user_id, {}).get(key, default)
+
     def log_copy(self) -> List[Dict[str, Any]]:
         with self._lock:
             return list(self.session_log)

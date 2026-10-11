@@ -5,11 +5,18 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="referrer" content="no-referrer">
   <title>Juice · EV charger</title>
-  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'><rect width='24' height='24' rx='6' fill='%23C6FF3D'/><path d='M13 3 6 13h5l-1 8 7-10h-5z' fill='%2316142B'/></svg>">
+  <link rel="icon" href="/static/icon-192.png" type="image/png">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <meta name="theme-color" content="#0F0E17">
+  <link rel="apple-touch-icon" href="/static/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="Juice">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=2">
+  <link rel="stylesheet" href="/static/app.css?v=3">
 </head>
 <body>
   <div class="wrap">
@@ -19,6 +26,7 @@
       <nav class="nav" aria-label="Pages">
         <a href="/" aria-current="page">Now</a>
         <a href="/stats">Stats</a>
+        <button type="button" class="btn primary install" id="installBtn" hidden>⬇ Install app</button>
         <span class="seg" id="themeSeg" role="group" aria-label="Theme"></span>
       </nav>
     </header>
@@ -27,7 +35,7 @@
     <footer class="foot" id="foot"></footer>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=2"></script>
-  <script src="/static/dashboard.js?v=2"></script>
+  <script src="/static/app.js?v=3"></script>
+  <script src="/static/dashboard.js?v=3"></script>
 </body>
 </html>

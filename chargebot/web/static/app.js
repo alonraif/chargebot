@@ -7,6 +7,7 @@
   CB.store = {
     get(store, key) { try { return window[store].getItem(key); } catch (e) { return null; } },
     set(store, key, value) { try { window[store].setItem(key, value); } catch (e) { /* storage blocked */ } },
+    remove(store, key) { try { window[store].removeItem(key); } catch (e) { /* storage blocked */ } },
   };
 
   CB.el = function (tag, props, ...children) {
@@ -49,18 +50,44 @@
     })));
   };
 
-  /* Read a secret from the URL once, keep it for this tab, and remove it from the address bar. */
+  /* Read a secret from the URL once, remember it on this device, and remove it from the address bar. */
   CB.takeParam = function (name) {
     let value = params.get(name);
     if (value) {
-      CB.store.set("sessionStorage", "cb-" + name, value);
+      CB.store.set("localStorage", "cb-" + name, value);
       params.delete(name);
       const qs = params.toString();
       history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
     } else {
-      value = CB.store.get("sessionStorage", "cb-" + name);
+      value = CB.store.get("localStorage", "cb-" + name);
     }
     return value || null;
+  };
+
+  /* Sign-in. A Slack link (?t=...) lasts a day; it's swapped for a long-lived pass kept on this device. */
+  CB.token = null;
+  CB.signIn = async function () {
+    const fromLink = params.get("t");
+    if (fromLink) {
+      params.delete("t");
+      const qs = params.toString();
+      history.replaceState(null, "", location.pathname + (qs ? "?" + qs : "") + location.hash);
+    }
+    CB.token = CB.store.get("localStorage", "cb-pass");
+    if (fromLink) {
+      try {
+        const res = await CB.post({ t: fromLink }, "/api/device");
+        CB.token = res.ok ? res.token : CB.token;
+        if (res.ok) CB.store.set("localStorage", "cb-pass", res.token);
+      } catch (e) {
+        CB.token = fromLink; // offline right now: use the Slack link for this visit
+      }
+    }
+    return CB.token;
+  };
+  CB.signOut = function () {
+    CB.store.remove("localStorage", "cb-pass");
+    CB.token = null;
   };
 
   /* Server clock. */
@@ -70,17 +97,18 @@
   CB.getJSON = async function (path, query) {
     const qs = new URLSearchParams();
     for (const [k, v] of Object.entries(query || {})) if (v) qs.set(k, v);
-    const res = await fetch(path + (qs.toString() ? "?" + qs : ""), { cache: "no-store" });
+    const headers = CB.token ? { "X-CB-Token": CB.token } : {};
+    const res = await fetch(path + (qs.toString() ? "?" + qs : ""), { cache: "no-store", headers });
     if (!res.ok) throw new Error("HTTP " + res.status);
     const data = await res.json();
     if (typeof data.now === "number") offset = data.now - Date.now() / 1000;
     return data;
   };
 
-  CB.post = async function (body) {
-    const res = await fetch("/api/action", {
-      method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
-    });
+  CB.post = async function (body, path) {
+    const headers = { "Content-Type": "application/json" };
+    if (CB.token && !body.t && !body.k) headers["X-CB-Token"] = CB.token;
+    const res = await fetch(path || "/api/action", { method: "POST", headers, body: JSON.stringify(body) });
     let data = {};
     try { data = await res.json(); } catch (e) { /* empty body */ }
     return data;
@@ -190,6 +218,33 @@
     const text = age === Infinity ? "Connecting…" : stale ? "Reconnecting…" : `Live · ${Math.round(age)}s ago`;
     node.replaceChildren(CB.el("i"), text);
   };
+
+  /* Installable app: register the service worker and show an Install button when the browser offers one. */
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => navigator.serviceWorker.register("/sw.js").catch(() => {}));
+  }
+  let installPrompt = null;
+  const installButton = () => document.getElementById("installBtn");
+  window.addEventListener("beforeinstallprompt", (event) => {
+    event.preventDefault();
+    installPrompt = event;
+    if (installButton()) installButton().hidden = false;
+  });
+  window.addEventListener("appinstalled", () => {
+    installPrompt = null;
+    if (installButton()) installButton().hidden = true;
+  });
+  CB.install = async function () {
+    if (!installPrompt) return;
+    installPrompt.prompt();
+    await installPrompt.userChoice;
+    installPrompt = null;
+    if (installButton()) installButton().hidden = true;
+  };
+  document.addEventListener("DOMContentLoaded", () => {
+    const btn = installButton();
+    if (btn) btn.addEventListener("click", CB.install);
+  });
 
   window.CB = CB;
 })();

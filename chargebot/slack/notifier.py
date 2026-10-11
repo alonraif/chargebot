@@ -62,7 +62,8 @@ class Notifier:
             return None
         if not user_id:
             return self.cfg.public_base_url + "/"
-        return f"{self.cfg.public_base_url}/?t={make_token(self.cfg.web_secret, user_id)}"
+        gen = int(self.engine.pref(user_id, "token_gen", 0))
+        return f"{self.cfg.public_base_url}/?t={make_token(self.cfg.web_secret, user_id, gen=gen)}"
 
     def note_home_open(self, user_id: str) -> None:
         with self._viewers_lock:

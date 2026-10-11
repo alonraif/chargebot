@@ -16,12 +16,16 @@ from ..config import Config
 from ..domain import State, charger_phase, queue_etas
 from ..engine import Engine
 from ..stats import global_stats
-from .tokens import check_kiosk_key, verify_token
+from .tokens import check_kiosk_key, make_token, read_token
 
 log = logging.getLogger(__name__)
 
 STATIC_DIR = os.path.join(os.path.dirname(__file__), "static")
 PAGES = {"/": "index.html", "/dashboard": "index.html", "/kiosk": "kiosk.html", "/stats": "stats.html"}
+# Served from the site root so the service worker can control every page.
+ROOT_FILES = {"/manifest.webmanifest": "manifest.webmanifest", "/sw.js": "sw.js"}
+mimetypes.add_type("application/manifest+json", ".webmanifest")
+mimetypes.add_type("application/javascript", ".js")
 WEB_ACTIONS = ("join", "confirm", "skip", "done", "unplugged", "leave", "extend", "nudge", "reclaim")
 MAX_BODY = 4096
 
@@ -44,6 +48,28 @@ class WebApp:
         self.engine = engine
         self.profile = profile
         self.socket_connected = socket_connected
+
+    # -- sign-in -------------------------------------------------------------------------
+
+    def viewer(self, token: Optional[str]) -> Optional[str]:
+        """The Slack user behind a dashboard pass, if it's genuine, unexpired and not signed out."""
+        found = read_token(self.cfg.web_secret, token)
+        if not found:
+            return None
+        user_id, gen = found
+        if gen != int(self.engine.pref(user_id, "token_gen", 0)):
+            return None
+        return user_id
+
+    def device_pass(self, token: Optional[str]) -> Dict[str, Any]:
+        """Swap a short Slack link for a long-lived pass kept on this device."""
+        user_id = self.viewer(token)
+        if not user_id:
+            return {"ok": False, "code": "bad_token", "status": 401}
+        gen = int(self.engine.pref(user_id, "token_gen", 0))
+        ttl = self.cfg.device_link_days * 86400
+        return {"ok": True, "token": make_token(self.cfg.web_secret, user_id, ttl, gen=gen),
+                "days": self.cfg.device_link_days, "status": 200}
 
     # -- read models -----------------------------------------------------------------
 
@@ -141,7 +167,7 @@ class WebApp:
                 return {"ok": False, "code": "not_offered", "status": 409}
             result = self.engine.act("confirm", charger.session.user_id)
         else:
-            user = verify_token(self.cfg.web_secret, body.get("t"))
+            user = self.viewer(body.get("t"))
             if not user:
                 return {"ok": False, "code": "bad_token", "status": 401}
             result = self.engine.act(action, user)
@@ -191,6 +217,9 @@ def make_handler(app: WebApp):
                 ctype += "; charset=utf-8"
             self._send(200, body, ctype, cache)
 
+        def _token(self, query: Dict[str, List[str]]) -> Optional[str]:
+            return self.headers.get("X-CB-Token") or (query.get("t") or [None])[0]
+
         def do_HEAD(self):  # noqa: N802
             self.do_GET()
 
@@ -201,10 +230,12 @@ def make_handler(app: WebApp):
             try:
                 if path in PAGES:
                     self._file(PAGES[path])
+                elif path in ROOT_FILES:
+                    self._file(ROOT_FILES[path])
                 elif path.startswith("/static/") and path[len("/static/"):] in static_files:
                     self._file(path[len("/static/"):])
                 elif path == "/api/state":
-                    viewer = verify_token(app.cfg.web_secret, (query.get("t") or [None])[0])
+                    viewer = app.viewer(self._token(query))
                     kiosk = check_kiosk_key(app.cfg.kiosk_key, (query.get("k") or [None])[0])
                     self._json(200, app.state_json(viewer=viewer, kiosk=kiosk))
                 elif path == "/status":
@@ -223,7 +254,7 @@ def make_handler(app: WebApp):
 
         def do_POST(self):  # noqa: N802
             path = urlparse(self.path).path
-            if path != "/api/action":
+            if path not in ("/api/action", "/api/device"):
                 self._json(404, {"error": "not_found"})
                 return
             try:
@@ -237,8 +268,10 @@ def make_handler(app: WebApp):
             except ValueError:
                 self._json(400, {"ok": False, "code": "bad_request"})
                 return
+            if self.headers.get("X-CB-Token") and not body.get("t") and "k" not in body:
+                body["t"] = self.headers.get("X-CB-Token")
             try:
-                result = app.action(body)
+                result = app.device_pass(body.get("t")) if path == "/api/device" else app.action(body)
             except Exception:
                 log.exception("POST action failed")
                 self._json(500, {"ok": False, "code": "server_error"})

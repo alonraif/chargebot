@@ -28,7 +28,9 @@ The old commands (`/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargest
 | `/healthz` | `200` when Slack is connected and the clock loop is running, `503` otherwise. Point the keep-alive cron here. |
 | `/api/state`, `/api/stats` | JSON behind the pages. No Slack IDs or emails. |
 
-Personal dashboard links are signed with `WEB_SECRET` and expire after 24 hours.
+**Signing in.** The *Open dashboard* buttons in Slack carry a signed link that's valid for 24 hours. The first time it's opened, the dashboard swaps it for a pass kept on that device for `DEVICE_LINK_DAYS` (90 by default), so the plain address keeps showing your buttons. Each device has its own pass. *Sign out* on the page forgets it on that device, and *Sign out everywhere* in Slack's Home tab cancels every pass that person was given. Changing `WEB_SECRET` signs everyone out.
+
+**Install as an app.** The dashboard is an installable web app. In Chrome, click *Install app* in the header (or the install icon in the address bar). On Android, use the menu → *Install app*. On iPhone, use Safari → Share → *Add to Home Screen*. It opens in its own window with the Juice icon.
 
 ## Rolling out the new version
 

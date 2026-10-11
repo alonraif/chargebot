@@ -52,6 +52,7 @@ class Config:
     public_base_url: Optional[str] = None
     web_secret: str = ""
     kiosk_key: Optional[str] = None
+    device_link_days: int = 90
     slack_app_id: Optional[str] = None
     slack_team_id: Optional[str] = None
 
@@ -117,6 +118,7 @@ class Config:
             public_base_url=base_url,
             web_secret=web_secret,
             kiosk_key=env.get("KIOSK_KEY") or None,
+            device_link_days=int(env.get("DEVICE_LINK_DAYS", "90")),
             slack_app_id=env.get("SLACK_APP_ID") or None,
             slack_team_id=env.get("SLACK_TEAM_ID") or None,
             state_file=env.get("STATE_FILE") or None,
