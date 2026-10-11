@@ -53,6 +53,8 @@ class Config:
     web_secret: str = ""
     kiosk_key: Optional[str] = None
     device_link_days: int = 90
+    vapid_private_key: Optional[str] = None
+    vapid_subject: str = "mailto:admin@example.com"
     slack_app_id: Optional[str] = None
     slack_team_id: Optional[str] = None
 
@@ -119,6 +121,9 @@ class Config:
             web_secret=web_secret,
             kiosk_key=env.get("KIOSK_KEY") or None,
             device_link_days=int(env.get("DEVICE_LINK_DAYS", "90")),
+            vapid_private_key=env.get("VAPID_PRIVATE_KEY") or None,
+            vapid_subject=env.get("VAPID_SUBJECT")
+            or ("mailto:" + env["GMAIL_FROM_EMAIL"] if env.get("GMAIL_FROM_EMAIL") else "mailto:admin@example.com"),
             slack_app_id=env.get("SLACK_APP_ID") or None,
             slack_team_id=env.get("SLACK_TEAM_ID") or None,
             state_file=env.get("STATE_FILE") or None,

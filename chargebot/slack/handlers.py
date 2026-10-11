@@ -10,6 +10,7 @@ from slack_sdk.errors import SlackApiError
 from ..config import Config
 from ..domain import Result
 from ..engine import Engine
+from ..web.login_codes import LoginCodes
 from . import blocks as B
 from .notifier import Notifier
 from .users import UserDirectory
@@ -35,8 +36,10 @@ LEGACY_COMMANDS = {
 }
 
 
-def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: UserDirectory) -> None:
+def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: UserDirectory,
+             codes: Optional[LoginCodes] = None) -> None:
     names = users.name
+    codes = codes or LoginCodes()
 
     # -- helpers -------------------------------------------------------------------
 
@@ -63,6 +66,19 @@ def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: U
     def run(sub: str, rest: str, body: Dict[str, Any], respond: Any, client: Any, legacy: bool) -> None:
         user = body["user_id"]
         tip = "Tip: `/charge` now does it all. Try `/charge help`." if legacy else None
+
+        if sub in ("dashboard", "web", "link"):
+            link = notifier.link_for(user)
+            if not link:
+                respond(text="The dashboard address isn't configured yet (PUBLIC_BASE_URL).")
+                return
+            respond(text="Your dashboard link", blocks=B.my_dashboard(link, cfg.device_link_days))
+            return
+
+        if sub in ("login", "code", "signin"):
+            text = B.login_code_text(codes.issue(user))
+            respond(text=text, blocks=[B.section(text)])
+            return
 
         if sub == "help":
             text = B.HELP + ("\n\n" + B.ADMIN_HELP if cfg.is_admin(user) else "")
@@ -168,6 +184,21 @@ def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: U
         on = action.get("value") == "on"
         engine.set_pref(user, "email_reminder", on)
         notifier.publish_home(user, notice="📅 Calendar reminders " + ("on." if on else "off."))
+
+    @app.action(B.A_MY_DASHBOARD)
+    def my_dashboard(ack, body, respond):
+        ack()
+        user = body["user"]["id"]
+        link = notifier.link_for(user)
+        if link:
+            respond(replace_original=False, response_type="ephemeral", text="Your dashboard link",
+                    blocks=B.my_dashboard(link, cfg.device_link_days))
+
+    @app.action(B.A_LOGIN_CODE)
+    def login_code(ack, body, client):
+        ack()
+        code = codes.issue(body["user"]["id"])
+        client.views_open(trigger_id=body["trigger_id"], view=B.login_code_modal(code))
 
     @app.action(B.A_SIGNOUT_ALL)
     def signout_all(ack, body):

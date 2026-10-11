@@ -105,6 +105,12 @@ class Engine:
     def set_out_of_order(self, charger_id: str, reason: Optional[str]) -> Result:
         return self.apply(lambda st, now: self.rules.set_out_of_order(st, charger_id, reason, now))
 
+    def push_subscribe(self, user_id: str, sub: Dict[str, str]) -> Result:
+        return self.apply(lambda st, now: self.rules.push_subscribe(st, user_id, sub, now))
+
+    def push_unsubscribe(self, endpoint: str) -> Result:
+        return self.apply(lambda st, now: self.rules.push_unsubscribe(st, endpoint, now))
+
     def set_pref(self, user_id: str, key: str, value: Any) -> Result:
         return self.apply(lambda st, now: self.rules.set_pref(st, user_id, key, value))
 

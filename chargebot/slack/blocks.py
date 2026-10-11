@@ -25,6 +25,8 @@ A_STATUS = "cb_status"
 A_LINK = "cb_link"
 A_PREF_EMAIL = "cb_pref_email"
 A_SIGNOUT_ALL = "cb_signout_all"
+A_MY_DASHBOARD = "cb_my_dashboard"
+A_LOGIN_CODE = "cb_login_code"
 A_ADMIN_OPEN = "cb_admin_open"
 A_ADMIN_END = "cb_admin_end"
 A_ADMIN_OOO = "cb_admin_ooo"
@@ -309,6 +311,33 @@ def reply(code: str, data: Dict[str, Any], cfg: Config, state: Optional[State], 
     return texts.get(code, code)
 
 
+def my_dashboard(link: str, days: int) -> List[Dict[str, Any]]:
+    return compact([
+        section(f"📱 Here's your personal dashboard link. It signs you in, and the page then remembers you on "
+                f"that device for {days} days."),
+        actions(button("Open my dashboard", A_LINK, url=link, style="primary")),
+        context("Installed the dashboard on your home screen? Use `/charge login` for a sign-in code instead."),
+    ])
+
+
+def login_code_text(code: str) -> str:
+    return (f"🔑 Your dashboard sign-in code is *`{code}`*\n"
+            "On the dashboard, tap *Sign in* and enter it within 10 minutes. It works once.")
+
+
+def login_code_modal(code: str) -> Dict[str, Any]:
+    return {
+        "type": "modal",
+        "title": {"type": "plain_text", "text": "Dashboard sign-in"},
+        "close": {"type": "plain_text", "text": "Done"},
+        "blocks": [
+            section(f"Your sign-in code:\n\n*`{code}`*"),
+            context("On the dashboard (or the Juice app on your home screen), tap *Sign in* and enter this code "
+                    "within 10 minutes. It works once, and then that device stays signed in."),
+        ],
+    }
+
+
 HELP = (
     "*⚡ ChargeBot*\n"
     "• `/charge`: claim the charger, or join the queue if it's busy\n"
@@ -317,6 +346,8 @@ HELP = (
     "• `/charge skip`: pass your turn to the next person\n"
     "• `/charge leave`: leave the queue\n"
     "• `/charge extend`: add time when nobody's waiting\n"
+    "• `/charge dashboard`: your personal dashboard link\n"
+    "• `/charge login`: a sign-in code for the dashboard app\n"
     "Tip: open ChargeBot's *Home* tab for live status and one-tap buttons."
 )
 
@@ -407,7 +438,8 @@ def live_message(state: State, now: float, cfg: Config, names: Names,
         header(title),
         *charger_lines(state, now, cfg, names),
         section(queue_lines(state, now, cfg, names)),
-        actions(button("🔌 Get in line", A_JOIN, style="primary"), dashboard_button(dashboard)),
+        actions(button("🔌 Get in line", A_JOIN, style="primary"),
+                button("📱 My dashboard", A_MY_DASHBOARD) if dashboard else None),
         context(f"Live status, updated {when(now)}. Use `/charge help` for commands."),
     ])
     summary = "; ".join(f"{c.name}: {charger_phase(c, now)}" for c in state.chargers)
@@ -447,9 +479,11 @@ def home_view(state: State, now: float, cfg: Config, names: Names, viewer: str, 
     if cfg.public_base_url:
         blocks.append(section(
             f"🔑 *Dashboard sign-in:* the dashboard remembers you on each phone or computer for "
-            f"{cfg.device_link_days} days.",
+            f"{cfg.device_link_days} days. Using the app on your home screen? Sign it in with a code."))
+        blocks.append(actions(
+            button("Get sign-in code", A_LOGIN_CODE),
             button("Sign out everywhere", A_SIGNOUT_ALL, confirm=confirm_dialog(
-                "Sign out everywhere?", "Every dashboard you've opened from Slack will need a fresh link.",
+                "Sign out everywhere?", "Every dashboard you've signed in to will need to sign in again.",
                 "Sign out"))))
     if stats["sessions"]:
         blocks.append(context(

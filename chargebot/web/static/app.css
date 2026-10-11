@@ -189,4 +189,17 @@ a { color: inherit; }
 }
 
 .btn.install { padding: 6px 12px; font-size: 13px; box-shadow: none; }
+#signin:not(:empty) { margin-bottom: 16px; }
+#notify:not(:empty) { margin-top: 16px; }
+.notify-line { text-align: center; font-size: 14px; color: var(--muted); }
+.signin h2 { font-size: 20px; font-weight: 800; margin: 0 0 6px; }
+.signin input {
+  font: 700 26px/1 var(--font-mono); letter-spacing: .12em; text-transform: uppercase; text-align: center;
+  width: 100%; max-width: 260px; padding: 12px; margin: 14px 0 4px; border-radius: 12px;
+  border: var(--border-w) solid var(--line); background: var(--card-2); color: var(--text);
+}
+:root[data-theme="dark"] .signin input, :root:not([data-theme="light"]) .signin input { border: 1.5px solid #3A3956; }
+.signin input:focus-visible { outline: 3px solid var(--cyan); outline-offset: 2px; }
+.signin .err { color: var(--danger); font-size: 14px; min-height: 1.4em; margin: 2px 0 0; }
+.signin .btns { justify-content: flex-start; margin-top: 10px; }
 .btn[hidden] { display: none; }

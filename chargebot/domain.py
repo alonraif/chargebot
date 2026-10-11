@@ -502,6 +502,24 @@ class Rules:
                 return self._done(result)
         return _fail("reclaim_expired")
 
+    def push_subscribe(self, state: State, user_id: str, sub: Dict[str, str], now: float,
+                       max_devices: int = 5) -> Result:
+        prefs = state.prefs.setdefault(user_id, {})
+        subs = [s for s in prefs.get("push", []) if s.get("endpoint") != sub["endpoint"]]
+        subs.append(dict(sub, at=now))
+        prefs["push"] = subs[-max_devices:]
+        return Result(code="push_on", changed=True)
+
+    def push_unsubscribe(self, state: State, endpoint: str, now: float) -> Result:
+        changed = False
+        for prefs in state.prefs.values():
+            subs = prefs.get("push") or []
+            kept = [s for s in subs if s.get("endpoint") != endpoint]
+            if len(kept) != len(subs):
+                prefs["push"] = kept
+                changed = True
+        return Result(code="push_off", changed=changed)
+
     def set_pref(self, state: State, user_id: str, key: str, value: Any) -> Result:
         state.prefs.setdefault(user_id, {})[key] = value
         return Result(code="pref_saved", changed=True, data={key: value})

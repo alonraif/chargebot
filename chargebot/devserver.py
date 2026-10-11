@@ -13,9 +13,11 @@ import time
 
 from .config import Config
 from .engine import Engine
+from .push import PushSender, generate_keys
 from .scheduler import Scheduler
 from .slack.users import Profile
 from .store import MemoryStore
+from .web.login_codes import LoginCodes
 from .web.server import WebApp, start_server
 from .web.tokens import make_token
 
@@ -56,7 +58,8 @@ def main() -> None:
 
     names = tuple(f"Charger {i + 1}" for i in range(args.chargers))
     cfg = Config(web_secret="dev-secret", kiosk_key="dev-kiosk", chargers=names, port=args.port,
-                 slack_app_id="A0DEV", slack_team_id="T0DEV", tick_s=2)
+                 slack_app_id="A0DEV", slack_team_id="T0DEV", tick_s=2,
+                 vapid_private_key=generate_keys()["VAPID_PRIVATE_KEY"])
     store = MemoryStore()
     store.log = fake_history(time.time())
     engine = Engine(cfg, store)
@@ -78,7 +81,10 @@ def main() -> None:
     def profile(uid: str) -> Profile:
         return Profile(uid, PEOPLE.get(uid, uid))
 
-    start_server(WebApp(cfg, engine, profile), cfg.port)
+    codes = LoginCodes()
+    pusher = PushSender(cfg, engine, lambda uid: PEOPLE.get(uid or "", "Someone"))
+    pusher.start()
+    start_server(WebApp(cfg, engine, profile, codes=codes, pusher=pusher), cfg.port)
     Scheduler(engine, cfg.tick_s).start()
     base = f"http://localhost:{cfg.port}"
     print(f"Dashboard:        {base}/")
@@ -86,6 +92,7 @@ def main() -> None:
     print(f"As Noa (charging):{base}/?t={make_token(cfg.web_secret, 'U1')}")
     print(f"Kiosk:            {base}/kiosk?k={cfg.kiosk_key}")
     print(f"Stats:            {base}/stats")
+    print(f"Sign-in code for 'You' (valid 10 min, once): {codes.issue('UME')}")
     print("Try: end Noa's session from her link to see the 'your turn' flow move down the queue.")
     try:
         while True:

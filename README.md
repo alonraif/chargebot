@@ -13,7 +13,7 @@ A Slack bot and web dashboard for sharing the office EV charger fairly. People g
 - **Live status**: one pinned message in the status channel, edited in place.
 - **Shortcut**: search "EV Charger" in Slack's shortcuts menu for a status and actions panel. It works well on mobile.
 
-Other subcommands: `/charge status`, `/charge done`, `/charge skip`, `/charge leave`, `/charge extend`, `/charge help`.
+Other subcommands: `/charge status`, `/charge done`, `/charge skip`, `/charge leave`, `/charge extend`, `/charge dashboard` (your personal dashboard link), `/charge login` (a sign-in code for the dashboard app), `/charge help`.
 The old commands (`/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargestatus`) still work.
 
 **Admins** (listed in `ADMIN_USER_IDS`): `/charge admin` opens a panel to end a session, reorder or remove people in the queue, and mark the charger out of order. `/charge admin out <reason>` and `/charge admin back` do the same from the command line.
@@ -28,7 +28,9 @@ The old commands (`/checkin`, `/request`, `/endcharge`, `/exitqueue`, `/chargest
 | `/healthz` | `200` when Slack is connected and the clock loop is running, `503` otherwise. Point the keep-alive cron here. |
 | `/api/state`, `/api/stats` | JSON behind the pages. No Slack IDs or emails. |
 
-**Signing in.** The *Open dashboard* buttons in Slack carry a signed link that's valid for 24 hours. The first time it's opened, the dashboard swaps it for a pass kept on that device for `DEVICE_LINK_DAYS` (90 by default), so the plain address keeps showing your buttons. Each device has its own pass. *Sign out* on the page forgets it on that device, and *Sign out everywhere* in Slack's Home tab cancels every pass that person was given. Changing `WEB_SECRET` signs everyone out.
+**Signing in.** The *Open dashboard* buttons in Slack carry a signed link that's valid for 24 hours. The first time it's opened, the dashboard swaps it for a pass kept on that device for `DEVICE_LINK_DAYS` (90 by default), so the plain address keeps showing your buttons. Each device has its own pass. Where a Slack link can't be opened directly, such as the app installed on an iPhone home screen, tap *Sign in* on the dashboard and enter a one-time code from Slack (*Get sign-in code* in the Home tab, or `/charge login`). Codes last 10 minutes and work once, and repeated wrong guesses are blocked. The *My dashboard* button on the channel's status message replies privately with each person's own link. *Sign out* on the page forgets it on that device, and *Sign out everywhere* in Slack's Home tab cancels every pass that person was given. Changing `WEB_SECRET` signs everyone out.
+
+**Notifications.** Once signed in, the dashboard offers *Turn on notifications* for that device. Your turn, the confirm reminders, the 10-minute warning, time's up and nudges then arrive as notifications, in addition to the Slack DMs. On Android and desktop Chrome the notifications have buttons (*I'm plugged in*, *I'm done*, *I've unplugged*) that work without opening the app. On iPhone (iOS 16.4 or later) notifications only work in the app added to the Home Screen; tapping one opens the app. This needs `VAPID_PRIVATE_KEY` on Render (`python -m chargebot.vapid` generates one).
 
 **Install as an app.** The dashboard is an installable web app. In Chrome, click *Install app* in the header (or the install icon in the address bar). On Android, use the menu → *Install app*. On iPhone, use Safari → Share → *Add to Home Screen*. It opens in its own window with the Juice icon.
 

@@ -218,3 +218,34 @@ def test_production_app_builds_without_signing_secret(monkeypatch):
     h = Harness(Config(web_secret="t"))
     users = UserDirectory(app.client)
     register(app, h.cfg, h.engine, Notifier(h.cfg, app.client, h.engine, users, h.store), users)
+
+
+def test_login_command_and_home_code_button(bot):
+    app, h, fake = bot
+    command(app, fake, "/charge", "login")
+    assert fake.wait_for("/respond")
+    text = json.dumps([b for p, b in fake.calls if p.endswith("/respond")][-1])
+    assert "sign-in code" in text
+    block_action(app, fake, B.A_LOGIN_CODE, container={"type": "view", "view_id": "V1"},
+                 view={"id": "V1", "type": "home"})
+    assert fake.wait_for("views.open")
+
+
+def test_live_message_offers_personal_dashboard_link(bot):
+    app, h, fake = bot
+    state, now = h.engine.view()
+    _, live = B.live_message(state, now, h.cfg, lambda u: u, "https://cb.example/")
+    ids = [e["action_id"] for b in live if b["type"] == "actions" for e in b["elements"]]
+    assert B.A_MY_DASHBOARD in ids and B.A_LINK not in ids  # no shared, sign-in-less link
+    block_action(app, fake, B.A_MY_DASHBOARD, user="U2",
+                 container={"type": "message", "message_ts": "9.9", "channel_id": "C1"})
+    assert fake.wait_for("/respond")
+    reply = [b for p, b in fake.calls if p.endswith("/respond")][-1]
+    assert reply.get("response_type") == "ephemeral" and "cb.example/?t=" in json.dumps(reply)
+
+
+def test_dashboard_command_gives_personal_link(bot):
+    app, h, fake = bot
+    command(app, fake, "/charge", "dashboard")
+    assert fake.wait_for("/respond")
+    assert "cb.example/?t=" in json.dumps([b for p, b in fake.calls if p.endswith("/respond")][-1])

@@ -7,6 +7,7 @@ requires-python = ">=3.9"
 dependencies = [
     "slack_bolt==1.28.0",
     "slack_sdk==3.43.0",
+    "pywebpush==2.0.3",
 ]
 
 [project.optional-dependencies]

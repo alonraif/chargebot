@@ -27,13 +27,14 @@ STATUS_DEBOUNCE_S = 1.5
 
 class Notifier:
     def __init__(self, cfg: Config, client: Any, engine: Engine, users: UserDirectory, store: Any,
-                 gmail: Optional[GmailSender] = None) -> None:
+                 gmail: Optional[GmailSender] = None, pusher: Any = None) -> None:
         self.cfg = cfg
         self.client = client
         self.engine = engine
         self.users = users
         self.store = store
         self.gmail = gmail
+        self.pusher = pusher
         self._slack_q: "queue.Queue[Any]" = queue.Queue()
         self._email_q: "queue.Queue[Any]" = queue.Queue()
         self._status_dirty = threading.Event()
@@ -56,6 +57,11 @@ class Notifier:
                 self._status_dirty.set()
             else:
                 self._slack_q.put(effect)
+                if self.pusher is not None and isinstance(effect, Notify):
+                    try:
+                        self.pusher.notify(effect)
+                    except Exception:
+                        log.exception("Queueing push notification failed.")
 
     def link_for(self, user_id: Optional[str]) -> Optional[str]:
         if not self.cfg.public_base_url:

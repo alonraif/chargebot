@@ -66,6 +66,7 @@
 
   /* Sign-in. A Slack link (?t=...) lasts a day; it's swapped for a long-lived pass kept on this device. */
   CB.token = null;
+  CB.linkStatus = null; // "ok", "rejected" (expired or invalid link) or "offline"
   CB.signIn = async function () {
     const fromLink = params.get("t");
     if (fromLink) {
@@ -77,13 +78,30 @@
     if (fromLink) {
       try {
         const res = await CB.post({ t: fromLink }, "/api/device");
-        CB.token = res.ok ? res.token : CB.token;
-        if (res.ok) CB.store.set("localStorage", "cb-pass", res.token);
+        if (res.ok) {
+          CB.token = res.token;
+          CB.store.set("localStorage", "cb-pass", res.token);
+          CB.linkStatus = "ok";
+        } else if (res.code === "bad_token") {
+          CB.linkStatus = "rejected";
+        } else {
+          CB.token = CB.token || fromLink; // server hiccup: try the Slack link itself for this visit
+          CB.linkStatus = "offline";
+        }
       } catch (e) {
-        CB.token = fromLink; // offline right now: use the Slack link for this visit
+        CB.token = CB.token || fromLink; // no connection right now: use the Slack link for this visit
+        CB.linkStatus = "offline";
       }
     }
     return CB.token;
+  };
+  CB.signInWithCode = async function (code) {
+    const res = await CB.post({ code }, "/api/login");
+    if (res.ok) {
+      CB.token = res.token;
+      CB.store.set("localStorage", "cb-pass", res.token);
+    }
+    return res;
   };
   CB.signOut = function () {
     CB.store.remove("localStorage", "cb-pass");
@@ -217,6 +235,46 @@
     node.classList.toggle("stale", stale);
     const text = age === Infinity ? "Connecting…" : stale ? "Reconnecting…" : `Live · ${Math.round(age)}s ago`;
     node.replaceChildren(CB.el("i"), text);
+  };
+
+  /* Push notifications on this device. */
+  const isIOS = /iPad|iPhone|iPod/.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+  const isStandalone = () => window.matchMedia("(display-mode: standalone)").matches || navigator.standalone === true;
+  CB.pushSupport = function () {
+    if (isIOS && !isStandalone()) return "ios-install"; // iPhone only allows push in the Home Screen app
+    if (!("serviceWorker" in navigator) || !("PushManager" in window) || !("Notification" in window)) return "unsupported";
+    if (Notification.permission === "denied") return "denied";
+    return "ok";
+  };
+  const keyBytes = (b64) => {
+    const raw = atob((b64 + "=".repeat((4 - b64.length % 4) % 4)).replace(/-/g, "+").replace(/_/g, "/"));
+    return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+  };
+  CB.pushSubscription = async function () {
+    if (!("serviceWorker" in navigator)) return null;
+    const reg = await navigator.serviceWorker.ready;
+    return reg.pushManager ? reg.pushManager.getSubscription() : null;
+  };
+  CB.enablePush = async function (publicKey) {
+    const permission = await Notification.requestPermission();
+    if (permission !== "granted") return { ok: false, code: permission === "denied" ? "denied" : "dismissed" };
+    const reg = await navigator.serviceWorker.ready;
+    let sub = await reg.pushManager.getSubscription();
+    try {
+      sub = sub || await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+    } catch (e) {
+      // An old subscription made with a different key: replace it.
+      if (sub) await sub.unsubscribe();
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: keyBytes(publicKey) });
+    }
+    return CB.post({ subscription: sub.toJSON() }, "/api/push/subscribe");
+  };
+  CB.disablePush = async function () {
+    const sub = await CB.pushSubscription();
+    if (!sub) return { ok: true };
+    const json = sub.toJSON();
+    await sub.unsubscribe();
+    return CB.post({ subscription: json }, "/api/push/unsubscribe");
   };
 
   /* Installable app: register the service worker and show an Install button when the browser offers one. */

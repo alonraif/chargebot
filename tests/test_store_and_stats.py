@@ -106,3 +106,18 @@ def test_ics_request_and_cancel():
     assert "METHOD:CANCEL" in cancel and "STATUS:CANCELLED" in cancel and "VALARM" not in cancel
     msg = build_email(Config(gmail_from_email="bot@x.com"), "a@x.com", "uid-1", 1.79e9, 1.79e9 + 300, cancel=True)
     assert msg["Subject"].startswith("Cancelled")
+
+
+def test_slack_store_reads_back_from_text_when_metadata_is_missing():
+    slack = FakeSlack()
+    store = SlackStore(slack, "C1", debounce_s=0)
+    store.save({"version": 5, "prefs": {"U1": {"push": [{"endpoint": "https://web.push.apple.com/x"}]}}})
+    store.append_log({"id": "s1", "outcome": "completed"}, "Noa: charged")
+    store.flush()
+    for m in slack.messages:  # simulate Slack ignoring the metadata
+        m["metadata"] = None
+        assert "https://" not in m["text"]  # nothing Slack could turn into a link
+    again = SlackStore(slack, "C1", debounce_s=0)
+    snap = again.load()
+    assert snap["version"] == 5 and snap["prefs"]["U1"]["push"][0]["endpoint"].startswith("https://")
+    assert again.load_log() == [{"id": "s1", "outcome": "completed"}]

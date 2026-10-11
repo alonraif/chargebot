@@ -5,17 +5,22 @@
 * Each finished session is posted as its own message with metadata. The
   messages double as a human-readable audit log.
 
+Every message also carries the same data as compressed text in a code block,
+so it can be read back even if Slack doesn't return (or ignores) the metadata.
 On startup, the channel history is read back with ``include_all_metadata``.
 Writes happen on a background thread, so callers never wait on Slack.
 """
 
 from __future__ import annotations
 
+import base64
 import json
 import logging
 import queue
+import re
 import threading
 import time
+import zlib
 from typing import Any, Dict, List, Optional
 
 from slack_sdk.errors import SlackApiError
@@ -28,6 +33,27 @@ MAX_HISTORY_PAGES = 40
 # Edited messages keep their original timestamp, so the snapshot is reposted
 # periodically to keep it near the top of the channel history.
 SNAPSHOT_REPOST_AGE_S = 30 * 86400
+
+
+TEXT_LIMIT = 39000  # Slack truncates message text at 40,000 characters
+_TEXT_DATA = re.compile(r"```cb:(state|session):([A-Za-z0-9_\-]+=*)```")
+
+
+def _encode_text(kind: str, payload: Dict[str, Any]) -> str:
+    """Compressed, URL-free text so Slack can't auto-link or reformat it."""
+    raw = zlib.compress(json.dumps(payload, separators=(",", ":")).encode(), 9)
+    return f"```cb:{kind}:{base64.urlsafe_b64encode(raw).decode()}```"
+
+
+def _decode_text(message: Dict[str, Any]) -> Optional[tuple]:
+    match = _TEXT_DATA.search(message.get("text") or "")
+    if not match:
+        return None
+    try:
+        data = json.loads(zlib.decompress(base64.urlsafe_b64decode(match.group(2))).decode())
+        return ("chargebot_" + match.group(1), data)
+    except (ValueError, zlib.error):
+        return None
 
 
 def _metadata(event_type: str, payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -67,14 +93,18 @@ class SlackStore:
                 channel=self.channel_id, include_all_metadata=True, limit=200, cursor=cursor)
             for msg in resp.get("messages", []):
                 event_type = (msg.get("metadata") or {}).get("event_type")
+                data = _payload(msg) if event_type in (STATE_EVENT, SESSION_EVENT) else None
+                if data is None:
+                    decoded = _decode_text(msg)
+                    if decoded:
+                        event_type, data = decoded
+                if data is None:
+                    continue
                 if event_type == STATE_EVENT and snapshot is None:
-                    snapshot = _payload(msg)
-                    if snapshot is not None:
-                        self._snapshot_ts = msg["ts"]
+                    snapshot = data
+                    self._snapshot_ts = msg["ts"]
                 elif event_type == SESSION_EVENT:
-                    record = _payload(msg)
-                    if record is not None:
-                        records.append(record)
+                    records.append(data)
             cursor = (resp.get("response_metadata") or {}).get("next_cursor")
             if not cursor:
                 break
@@ -130,7 +160,11 @@ class SlackStore:
 
     def _write_snapshot(self, snapshot: Dict[str, Any]) -> None:
         text = (f":card_file_box: ChargeBot state v{snapshot.get('version', 0)}. "
-                "Please don't edit or delete this message; the bot keeps its memory here.")
+                "Please don't edit or delete this message; the bot keeps its memory here.\n"
+                + _encode_text("state", snapshot))
+        if len(text) > TEXT_LIMIT:
+            log.error("State is too large to store as text (%d characters); relying on metadata only.", len(text))
+            text = text.split("\n", 1)[0]
         metadata = _metadata(STATE_EVENT, snapshot)
         if self._snapshot_ts and time.time() - float(self._snapshot_ts) > SNAPSHOT_REPOST_AGE_S:
             old_ts, self._snapshot_ts = self._snapshot_ts, None
@@ -152,4 +186,5 @@ class SlackStore:
 
     def _write_log(self, record: Dict[str, Any], summary: str) -> None:
         self.client.chat_postMessage(
-            channel=self.channel_id, text=summary, metadata=_metadata(SESSION_EVENT, record))
+            channel=self.channel_id, text=summary + "\n" + _encode_text("session", record),
+            metadata=_metadata(SESSION_EVENT, record))

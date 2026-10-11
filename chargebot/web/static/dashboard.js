@@ -7,6 +7,10 @@
   const main = document.getElementById("main");
   const foot = document.getElementById("foot");
   const banner = document.getElementById("banner");
+  const signinBox = document.getElementById("signin");
+  const signinBtn = document.getElementById("signinBtn");
+  const notifyBox = document.getElementById("notify");
+  let notifyKey = "";
   let lastKey = "";
   let busy = false;
   let expired = false;
@@ -43,6 +47,126 @@
         refresh();
       },
     });
+  }
+
+  function openSignIn() {
+    if (signinBox.firstChild) {
+      signinBox.querySelector("input").focus();
+      return;
+    }
+    const input = el("input", { type: "text", inputmode: "text", autocomplete: "one-time-code", autocapitalize: "characters",
+      spellcheck: "false", maxlength: "9", placeholder: "K7Q-4ZP", "aria-label": "Sign-in code" });
+    const err = el("p", { class: "err", role: "alert" });
+    const submit = el("button", { type: "submit", class: "btn primary", text: "Sign in" });
+    const form = el("form", { class: "card signin", "aria-label": "Sign in" },
+      el("h2", { text: "Sign in with a code" }),
+      el("p", { class: "muted", style: "margin:0" }, "In Slack, open ChargeBot's ", el("b", { text: "Home" }),
+        " tab and tap ", el("b", { text: "Get sign-in code" }), ", or type ", el("b", { class: "mono", text: "/charge login" }), "."),
+      input, err,
+      el("div", { class: "btns" }, submit,
+        el("button", { type: "button", class: "btn", text: "Cancel", onclick: () => signinBox.replaceChildren() })));
+    input.addEventListener("input", () => { err.textContent = ""; });
+    form.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const code = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "");
+      if (code.length !== 6) {
+        err.textContent = "Enter the 6-character code from Slack.";
+        input.focus();
+        return;
+      }
+      submit.disabled = true;
+      try {
+        const res = await CB.signInWithCode(code);
+        if (res.ok) {
+          signinBox.replaceChildren();
+          expired = false;
+          CB.linkStatus = "ok";
+          lastKey = "";
+          CB.toast("Signed in. This device will remember you.");
+          refresh();
+          return;
+        }
+        err.textContent = res.code === "too_many_attempts"
+          ? "Too many tries. Wait a few minutes, then try again."
+          : "That code didn't work. Codes last 10 minutes and work once, so get a fresh one in Slack.";
+      } catch (e) {
+        err.textContent = "Couldn't reach ChargeBot. Check your connection and try again.";
+      }
+      submit.disabled = false;
+      input.select();
+    });
+    signinBox.replaceChildren(form);
+    input.focus();
+  }
+  if (signinBtn) signinBtn.addEventListener("click", openSignIn);
+
+  async function renderNotify(state) {
+    const support = state.me && state.push_key ? CB.pushSupport() : "off";
+    const sub = support === "ok" ? await CB.pushSubscription().catch(() => null) : null;
+    const dismissed = CB.store.get("localStorage", "cb-push-dismissed") === "1";
+    const key = [support, !!sub, dismissed].join("|");
+    if (key === notifyKey) return;
+    notifyKey = key;
+
+    if (support === "ok" && sub) {
+      notifyBox.replaceChildren(el("p", { class: "notify-line" }, "🔔 Notifications are on for this device. ",
+        el("a", { href: "#", text: "Turn off", onclick: async (e) => {
+          e.preventDefault();
+          await CB.disablePush().catch(() => null);
+          CB.toast("Notifications off for this device.");
+          notifyKey = "";
+          renderNotify(state);
+        } })));
+      return;
+    }
+    if (dismissed || support === "off" || support === "unsupported") {
+      notifyBox.replaceChildren(dismissed && support === "ok"
+        ? el("p", { class: "notify-line" }, el("a", { href: "#", text: "🔔 Turn on notifications", onclick: (e) => {
+            e.preventDefault();
+            CB.store.remove("localStorage", "cb-push-dismissed");
+            notifyKey = "";
+            renderNotify(state);
+          } }))
+        : "");
+      return;
+    }
+    const later = el("button", { type: "button", class: "btn", text: "Not now", onclick: () => {
+      CB.store.set("localStorage", "cb-push-dismissed", "1");
+      notifyKey = "";
+      renderNotify(state);
+    } });
+    let body, buttons;
+    if (support === "ios-install") {
+      body = el("p", { class: "muted", style: "margin:0" }, "On iPhone, notifications work in the Juice app: in Safari, tap ",
+        el("b", { text: "Share" }), " → ", el("b", { text: "Add to Home Screen" }),
+        ", open Juice from your Home Screen, sign in, and turn notifications on there.");
+      buttons = [later];
+    } else if (support === "denied") {
+      body = el("p", { class: "muted", style: "margin:0" },
+        "Notifications are blocked for this site. Allow them in your browser's site settings, then come back here.");
+      buttons = [later];
+    } else {
+      body = el("p", { class: "muted", style: "margin:0" },
+        "Get your turn, the reminders and time's up on this device, even when the app is closed.");
+      const on = el("button", { type: "button", class: "btn primary", text: "🔔 Turn on notifications", onclick: async () => {
+        on.disabled = true;
+        let res;
+        try {
+          res = await CB.enablePush(state.push_key);
+        } catch (e) {
+          res = { ok: false };
+        }
+        CB.toast(res.ok ? "Notifications on. A test one is on its way."
+          : res.code === "denied" ? "Notifications are blocked for this site."
+          : res.code === "dismissed" ? "No problem. You can turn them on any time."
+          : "Couldn't turn on notifications. Try again.");
+        notifyKey = "";
+        renderNotify(state);
+      } });
+      buttons = [on, later];
+    }
+    notifyBox.replaceChildren(el("section", { class: "card signin", "aria-label": "Notifications" },
+      el("h2", { text: "🔔 Get notified on this device" }), body, el("div", { class: "btns" }, buttons)));
   }
 
   function personRow(person, sub) {
@@ -163,11 +287,15 @@
     foot.replaceChildren(state.me
       ? el("span", {}, `Signed in as ${state.me.person.name} on this device. `, signOut)
       : el("span", {},
-          expired ? "Your sign-in expired. " : "",
-          "Open the dashboard from ChargeBot in Slack to get your buttons here, or type ",
-          el("b", { class: "mono", text: "/charge" }), " in Slack",
+          CB.linkStatus === "rejected" || CB.linkStatus === "shown"
+            ? el("b", { text: "That Slack link has expired or is no longer valid. " })
+            : expired ? "Your sign-in expired. " : "",
+          "To get your buttons here, ",
+          el("a", { href: "#", text: "sign in with a code", onclick: (e) => { e.preventDefault(); openSignIn(); } }),
+          " from ChargeBot in Slack, or type ", el("b", { class: "mono", text: "/charge" }), " in Slack",
           state.slack_url ? el("span", {}, " (", el("a", { href: state.slack_url, text: "open ChargeBot" }), ")") : null,
           "."));
+    if (signinBtn) signinBtn.hidden = !!state.me;
     CB.tickLive();
   }
 
@@ -180,6 +308,11 @@
       expired = true;
     }
     render(state);
+    renderNotify(state);
+    if (CB.linkStatus === "rejected" && !state.me && !signinBox.firstChild) {
+      CB.linkStatus = "shown";
+      openSignIn();
+    }
   }
 
   const refresh = CB.poll(load, 5000, (age) => {

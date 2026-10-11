@@ -11,12 +11,14 @@ from slack_bolt.adapter.socket_mode import SocketModeHandler
 
 from .config import Config
 from .engine import Engine
+from .push import PushSender
 from .reminders.gmail import GmailSender
 from .scheduler import Scheduler
 from .slack.handlers import register
 from .slack.notifier import Notifier
 from .slack.users import UserDirectory
 from .store import FileStore, MemoryStore, SlackStore
+from .web.login_codes import LoginCodes
 from .web.server import WebApp, start_server
 
 log = logging.getLogger("chargebot")
@@ -70,14 +72,19 @@ def main() -> None:
     users = UserDirectory(app.client)
     gmail = GmailSender(cfg)
     log.info("Calendar reminders by email are %s.", "on" if gmail.ready else "off (Gmail settings incomplete)")
-    notifier = Notifier(cfg, app.client, engine, users, store, gmail)
+    pusher = PushSender(cfg, engine, users.name)
+    log.info("Push notifications are %s.", "on" if pusher.ready else "off (VAPID_PRIVATE_KEY not set)")
+    pusher.start()
+    notifier = Notifier(cfg, app.client, engine, users, store, gmail, pusher)
     engine.set_dispatcher(notifier.dispatch)
     notifier.start()
 
-    register(app, cfg, engine, notifier, users)
+    codes = LoginCodes()
+    register(app, cfg, engine, notifier, users, codes)
     handler = SocketModeHandler(app, cfg.slack_app_token)
 
-    start_server(WebApp(cfg, engine, users.get, socket_connected=handler.client.is_connected), cfg.port)
+    start_server(WebApp(cfg, engine, users.get, socket_connected=handler.client.is_connected, codes=codes,
+                        pusher=pusher), cfg.port)
     Scheduler(engine, cfg.tick_s).start()
 
     log.info("ChargeBot starting with %d charger(s).", len(cfg.chargers))

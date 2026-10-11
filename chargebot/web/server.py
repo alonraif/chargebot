@@ -15,7 +15,9 @@ from urllib.parse import parse_qs, urlparse
 from ..config import Config
 from ..domain import State, charger_phase, queue_etas
 from ..engine import Engine
+from ..push import valid_subscription
 from ..stats import global_stats
+from .login_codes import LoginCodes
 from .tokens import check_kiosk_key, make_token, read_token
 
 log = logging.getLogger(__name__)
@@ -43,11 +45,14 @@ def _initials(name: str) -> str:
 
 class WebApp:
     def __init__(self, cfg: Config, engine: Engine, profile: Callable[[str], Any],
-                 socket_connected: Callable[[], bool] = lambda: True) -> None:
+                 socket_connected: Callable[[], bool] = lambda: True,
+                 codes: Optional[LoginCodes] = None, pusher: Any = None) -> None:
         self.cfg = cfg
         self.engine = engine
         self.profile = profile
         self.socket_connected = socket_connected
+        self.codes = codes or LoginCodes()
+        self.pusher = pusher
 
     # -- sign-in -------------------------------------------------------------------------
 
@@ -66,6 +71,31 @@ class WebApp:
         user_id = self.viewer(token)
         if not user_id:
             return {"ok": False, "code": "bad_token", "status": 401}
+        return self._issue_pass(user_id)
+
+    def push_subscription(self, token: Optional[str], body: Dict[str, Any], on: bool) -> Dict[str, Any]:
+        user_id = self.viewer(token)
+        if not user_id:
+            return {"ok": False, "code": "bad_token", "status": 401}
+        if not self.pusher or not self.pusher.ready:
+            return {"ok": False, "code": "push_unavailable", "status": 503}
+        sub = valid_subscription(body.get("subscription"))
+        if not sub:
+            return {"ok": False, "code": "bad_subscription", "status": 400}
+        if on:
+            self.engine.push_subscribe(user_id, sub)
+            self.pusher.send_test(user_id, sub)
+        else:
+            self.engine.push_unsubscribe(sub["endpoint"])
+        return {"ok": True, "code": "push_on" if on else "push_off", "status": 200}
+
+    def login_with_code(self, code: Optional[str], client: str) -> Dict[str, Any]:
+        user_id, reason = self.codes.redeem(code, client)
+        if not user_id:
+            return {"ok": False, "code": reason, "status": 429 if reason == "too_many_attempts" else 401}
+        return self._issue_pass(user_id)
+
+    def _issue_pass(self, user_id: str) -> Dict[str, Any]:
         gen = int(self.engine.pref(user_id, "token_gen", 0))
         ttl = self.cfg.device_link_days * 86400
         return {"ok": True, "token": make_token(self.cfg.web_secret, user_id, ttl, gen=gen),
@@ -131,6 +161,7 @@ class WebApp:
             "slack_url": self.slack_url(),
             "me": None,
             "kiosk_can_confirm": kiosk,
+            "push_key": self.pusher.public_key if self.pusher and self.pusher.ready else None,
         }
         if viewer:
             data["me"] = {"person": self.person(viewer, viewer), "actions": self.my_actions(state, viewer)}
@@ -217,6 +248,11 @@ def make_handler(app: WebApp):
                 ctype += "; charset=utf-8"
             self._send(200, body, ctype, cache)
 
+        def _client(self) -> str:
+            # Render sits behind a proxy; the first forwarded address is the real client.
+            forwarded = (self.headers.get("X-Forwarded-For") or "").split(",")[0].strip()
+            return forwarded or self.client_address[0]
+
         def _token(self, query: Dict[str, List[str]]) -> Optional[str]:
             return self.headers.get("X-CB-Token") or (query.get("t") or [None])[0]
 
@@ -254,7 +290,7 @@ def make_handler(app: WebApp):
 
         def do_POST(self):  # noqa: N802
             path = urlparse(self.path).path
-            if path not in ("/api/action", "/api/device"):
+            if path not in ("/api/action", "/api/device", "/api/login", "/api/push/subscribe", "/api/push/unsubscribe"):
                 self._json(404, {"error": "not_found"})
                 return
             try:
@@ -271,7 +307,14 @@ def make_handler(app: WebApp):
             if self.headers.get("X-CB-Token") and not body.get("t") and "k" not in body:
                 body["t"] = self.headers.get("X-CB-Token")
             try:
-                result = app.device_pass(body.get("t")) if path == "/api/device" else app.action(body)
+                if path == "/api/device":
+                    result = app.device_pass(body.get("t"))
+                elif path == "/api/login":
+                    result = app.login_with_code(body.get("code"), self._client())
+                elif path.startswith("/api/push/"):
+                    result = app.push_subscription(body.get("t"), body, on=path.endswith("/subscribe"))
+                else:
+                    result = app.action(body)
             except Exception:
                 log.exception("POST action failed")
                 self._json(500, {"ok": False, "code": "server_error"})

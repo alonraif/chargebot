@@ -16,7 +16,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:wght@400;600;800&family=JetBrains+Mono:wght@500;700&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="/static/app.css?v=3">
+  <link rel="stylesheet" href="/static/app.css?v=6">
 </head>
 <body>
   <div class="wrap">
@@ -26,16 +26,19 @@
       <nav class="nav" aria-label="Pages">
         <a href="/" aria-current="page">Now</a>
         <a href="/stats">Stats</a>
+        <button type="button" class="btn install" id="signinBtn" hidden>Sign in</button>
         <button type="button" class="btn primary install" id="installBtn" hidden>⬇ Install app</button>
         <span class="seg" id="themeSeg" role="group" aria-label="Theme"></span>
       </nav>
     </header>
     <div id="banner"></div>
+    <div id="signin"></div>
     <main id="main" class="stack" aria-live="polite"></main>
+    <div id="notify"></div>
     <footer class="foot" id="foot"></footer>
   </div>
   <div class="toast" id="toast" role="status"></div>
-  <script src="/static/app.js?v=3"></script>
-  <script src="/static/dashboard.js?v=3"></script>
+  <script src="/static/app.js?v=6"></script>
+  <script src="/static/dashboard.js?v=6"></script>
 </body>
 </html>

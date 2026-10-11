@@ -27,6 +27,7 @@ def server():
     from http.server import ThreadingHTTPServer
     h = Harness(Config(web_secret=SECRET, kiosk_key="kk"))
     app = WebApp(h.cfg, h.engine, profile)
+    h.web = app
     srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(app))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     base = f"http://127.0.0.1:{srv.server_address[1]}"
@@ -198,3 +199,65 @@ def test_installable_app_files(server):
     assert status == 200 and "javascript" in headers["Content-Type"]
     page = get(base + "/")[1].decode()
     assert 'rel="manifest"' in page and "installBtn" in page
+
+
+def test_login_codes_are_single_use_expire_and_rate_limit():
+    from chargebot.web.login_codes import CODE_TTL_S, MAX_FAILS_PER_CLIENT, LoginCodes
+    now = [1000.0]
+    codes = LoginCodes(clock=lambda: now[0])
+    code = codes.issue("U1")
+    assert len(code) == 7 and code[3] == "-"
+    assert codes.redeem(code.lower().replace("-", " "), "ip1") == ("U1", "ok")  # forgiving input
+    assert codes.redeem(code, "ip1") == (None, "bad_code")  # used up
+    older = codes.issue("U1")
+    newer = codes.issue("U1")
+    assert codes.redeem(older, "ip1")[1] == "bad_code"  # a new code replaces the old one
+    now[0] += CODE_TTL_S + 1
+    assert codes.redeem(newer, "ip1")[1] == "bad_code"  # expired
+    for _ in range(MAX_FAILS_PER_CLIENT):
+        codes.redeem("AAAAAA", "ip2")
+    fresh = codes.issue("U2")
+    assert codes.redeem(fresh, "ip2") == (None, "too_many_attempts")
+    assert codes.redeem(fresh, "ip3") == ("U2", "ok")  # other clients unaffected
+
+
+def test_login_endpoint_issues_device_pass(server):
+    h, base = server
+    code = h.web.codes.issue("U1")
+    status, res = post(base + "/api/login", {"code": code})
+    assert status == 200 and res["ok"] and res["days"] == 90
+    assert get_with_header(base + "/api/state", res["token"])["me"]["person"]["name"] == "Noa Levi"
+    status, res = post(base + "/api/login", {"code": code})
+    assert status == 401 and res["code"] == "bad_code"
+
+
+class FakePusher:
+    ready = True
+    public_key = "BPUBLICKEY"
+
+    def __init__(self):
+        self.tests = []
+
+    def send_test(self, user_id, sub):
+        self.tests.append((user_id, sub["endpoint"]))
+
+
+def test_push_subscribe_endpoints(server):
+    h, base = server
+    pusher = FakePusher()
+    h.web.pusher = pusher
+    device = post(base + "/api/login", {"code": h.web.codes.issue("U1")})[1]["token"]
+    assert get_with_header(base + "/api/state", device)["push_key"] == "BPUBLICKEY"
+    good = {"endpoint": "https://web.push.apple.com/abc",
+            "keys": {"p256dh": "BNcRdreALRFXTkOOUHK1EtK2wtaz5Ry4YfYCA_0QTpQtUbVlUls0VJXg7A8u-Ts1Xbjh",
+                     "auth": "tBHItJI5svbpez7KI4CCXg"}}
+    assert post(base + "/api/push/subscribe", {"subscription": good})[0] == 401  # must be signed in
+    status, res = post_with_header(base + "/api/push/subscribe", {"subscription": good}, device)
+    assert status == 200 and pusher.tests == [("U1", good["endpoint"])]
+    assert h.engine.pref("U1", "push")[0]["endpoint"] == good["endpoint"]
+    evil = dict(good, endpoint="https://evil.example.com/x")
+    assert post_with_header(base + "/api/push/subscribe", {"subscription": evil}, device)[0] == 400
+    assert post_with_header(base + "/api/push/unsubscribe", {"subscription": good}, device)[0] == 200
+    assert h.engine.pref("U1", "push") == []
+    h.web.pusher = None
+    assert post_with_header(base + "/api/push/subscribe", {"subscription": good}, device)[0] == 503
