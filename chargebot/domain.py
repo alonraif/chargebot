@@ -253,6 +253,16 @@ def queue_etas(cfg: Config, state: State, now: float) -> List[Optional[float]]:
     return etas
 
 
+def extend_opens_at(cfg: Config, session: Session) -> Optional[float]:
+    """Extending is only offered in the last few minutes of a session."""
+    return session.ends_at - cfg.warn_before_end_s if session.ends_at is not None else None
+
+
+def can_extend(cfg: Config, state: State, session: Session, now: float) -> bool:
+    opens = extend_opens_at(cfg, session)
+    return session.confirmed and not state.queue and opens is not None and now >= opens
+
+
 # ---------------------------------------------------------------------------
 # Rules
 # ---------------------------------------------------------------------------
@@ -454,8 +464,9 @@ class Rules:
             return _fail("not_charging")
         if state.queue:
             return _fail("queue_waiting", waiting=len(state.queue))
-        if session.extensions >= self.cfg.max_extensions:
-            return _fail("max_extensions", ends_at=session.ends_at)
+        opens = extend_opens_at(self.cfg, session)
+        if opens is not None and now < opens:
+            return _fail("too_early", opens_at=opens, ends_at=session.ends_at)
         result = Result(code="extended")
         session.ends_at = (session.ends_at or now) + self.cfg.extend_s
         session.extensions += 1
@@ -616,9 +627,9 @@ class Rules:
                     }, track=f"unplug:{charger.id}"))
                 elif not s.warned and now >= s.ends_at - cfg.warn_before_end_s:
                     s.warned = True
-                    can_extend = not state.queue and s.extensions < cfg.max_extensions
+                    extendable = can_extend(cfg, state, s, now)
                     result.effects.append(Notify(s.user_id, "warn_end", {
-                        "charger_id": charger.id, "ends_at": s.ends_at, "can_extend": can_extend,
+                        "charger_id": charger.id, "ends_at": s.ends_at, "can_extend": extendable,
                     }, track=s.id))
                     result.changed = True
 

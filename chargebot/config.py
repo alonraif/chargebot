@@ -38,7 +38,6 @@ class Config:
     confirm_alerts_s: Tuple[int, ...] = (5 * 60, 8 * 60)
     warn_before_end_s: int = 10 * 60
     extend_s: int = 30 * 60
-    max_extensions: int = 2
     next_up_heads_up_s: int = 15 * 60
     nudge_cooldown_s: int = 5 * 60
 
@@ -110,7 +109,6 @@ class Config:
             confirm_alerts_s=alerts,
             warn_before_end_s=_minutes(env, "WARN_BEFORE_END_MIN", 10),
             extend_s=_minutes(env, "EXTEND_MIN", 30),
-            max_extensions=int(env.get("MAX_EXTENSIONS", "2")),
             next_up_heads_up_s=_minutes(env, "NEXT_UP_HEADS_UP_MIN", 15),
             nudge_cooldown_s=_minutes(env, "NUDGE_COOLDOWN_MIN", 5),
             state_channel_id=env.get("STATE_CHANNEL_ID") or None,

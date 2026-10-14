@@ -124,12 +124,19 @@ def test_extend_only_when_nobody_waits(h):
     assert h.act("extend", "U1").code == "queue_waiting"
 
 
-def test_extend_limit(h):
+def test_extend_only_in_last_minutes_and_uncapped(h):
     h.act("join", "U1")
     h.act("confirm", "U1")
+    assert h.act("extend", "U1").code == "too_early"
+    h.wait(111)
     assert h.act("extend", "U1").ok
-    assert h.act("extend", "U1").ok
-    assert h.act("extend", "U1").code == "max_extensions"
+    # The new end is 30 min away, so the window is closed again.
+    assert h.act("extend", "U1").code == "too_early"
+    for _ in range(3):
+        h.clear()
+        h.wait(30)
+        assert h.notes("U1", "warn_end")[-1].data["can_extend"] is True
+        assert h.act("extend", "U1").ok
 
 
 def test_done_early_cancels_invite_and_promotes(h):

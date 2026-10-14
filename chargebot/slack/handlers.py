@@ -48,10 +48,10 @@ def register(app: Any, cfg: Config, engine: Engine, notifier: Notifier, users: U
         return B.reply(result.code, result.data, cfg, state, names)
 
     def reply_blocks(text: str, user_id: str, extra: Optional[str] = None):
-        state, _ = engine.view()
+        state, now = engine.view()
         return B.compact([
             B.section(text),
-            B.viewer_buttons(state, cfg, user_id, notifier.link_for(user_id)),
+            B.viewer_buttons(state, cfg, user_id, now, notifier.link_for(user_id)),
             B.context(extra) if extra else None,
         ])
 

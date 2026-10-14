@@ -70,7 +70,7 @@ def test_every_reply_code_has_copy():
     h = Harness(Config(web_secret="t"))
     codes = ["offered", "queued", "already_active", "already_queued", "confirmed", "already_confirmed",
              "not_offered", "skipped", "done", "unplugged", "nothing_to_end", "nothing_to_unplug", "left",
-             "not_queued", "extended", "queue_waiting", "max_extensions", "not_charging", "nudged",
+             "not_queued", "extended", "queue_waiting", "too_early", "not_charging", "nudged",
              "nudge_too_soon", "nothing_to_nudge", "reclaimed", "reclaim_expired", "ended", "no_session",
              "removed", "moved", "already_first", "out_of_order", "back_in_service", "pref_saved", "not_admin"]
     for code in codes:
@@ -100,11 +100,25 @@ def test_viewer_buttons_match_situation():
     h = Harness(Config(web_secret="t"))
     h.act("join", "U1")
     h.act("join", "U2")
-    state, _ = h.engine.view()
-    ids = lambda u: [b["action_id"] for b in B.viewer_buttons(state, h.cfg, u)["elements"]]  # noqa: E731
+    state, now = h.engine.view()
+    ids = lambda u: [b["action_id"] for b in B.viewer_buttons(state, h.cfg, u, now)["elements"]]  # noqa: E731
     assert ids("U1")[:2] == [B.A_CONFIRM, B.A_SKIP]
     assert ids("U2") == [B.A_LEAVE]
     assert ids("U3") == [B.A_JOIN]
+
+
+def test_extend_button_only_in_last_minutes():
+    h = Harness(Config(web_secret="t"))
+    h.act("join", "U1")
+    h.act("confirm", "U1")
+
+    def ids():
+        state, now = h.engine.view()
+        return [b["action_id"] for b in B.viewer_buttons(state, h.cfg, "U1", now)["elements"]]
+
+    assert B.A_EXTEND not in ids()
+    h.wait(111)
+    assert B.A_EXTEND in ids()
 
 
 def test_closed_messages_have_text_for_every_reason():

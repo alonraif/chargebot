@@ -75,7 +75,7 @@ The start command can stay `python chargingbot.py`, and the build command stays 
 
 ## Configuration
 
-See [.env.example](.env.example) for every setting. Timing is in minutes: `CHARGE_MIN`, `GRACE_MIN`, `CONFIRM_MIN`, `CONFIRM_ALERT_AT_MIN`, `WARN_BEFORE_END_MIN`, `EXTEND_MIN`, `MAX_EXTENSIONS`, `NEXT_UP_HEADS_UP_MIN` and `NUDGE_COOLDOWN_MIN`.
+See [.env.example](.env.example) for every setting. Timing is in minutes: `CHARGE_MIN`, `GRACE_MIN`, `CONFIRM_MIN`, `CONFIRM_ALERT_AT_MIN`, `WARN_BEFORE_END_MIN`, `EXTEND_MIN`, `NEXT_UP_HEADS_UP_MIN` and `NUDGE_COOLDOWN_MIN`.
 
 **Adding a second charger:** set `CHARGERS="Charger 1,Charger 2"` (any names) and redeploy. There's one shared queue, and the next person gets whichever charger frees up first. With one charger, names never appear anywhere.
 

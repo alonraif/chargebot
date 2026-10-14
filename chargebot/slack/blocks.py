@@ -6,7 +6,7 @@ import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import Config
-from ..domain import State, charger_phase, queue_etas
+from ..domain import State, can_extend, charger_phase, queue_etas
 from ..stats import user_stats
 
 Names = Callable[[Optional[str]], str]
@@ -290,7 +290,8 @@ def reply(code: str, data: Dict[str, Any], cfg: Config, state: Optional[State], 
                        if data.get("has_session") else "You're not in the queue."),
         "extended": f"➕ Extended until {when(data.get('ends_at'))}.",
         "queue_waiting": f"Can't extend: {plural(data.get('waiting', 1), 'person is', 'people are')} waiting.",
-        "max_extensions": "You've reached the extension limit for this session.",
+        "too_early": (f"You can extend in the last {duration(cfg.warn_before_end_s)} of your session, "
+                      f"from {when(data.get('opens_at'))}. I'll message you then."),
         "not_charging": "You're not charging right now.",
         "nudged": f"🔔 Nudged {names(data.get('target_user_id'))}.",
         "nudge_too_soon": f"You nudged recently. Try again in {max(1, mins(data.get('wait_s', 60)))} min.",
@@ -345,7 +346,7 @@ HELP = (
     "• `/charge done`: end your session early (or say you've unplugged)\n"
     "• `/charge skip`: pass your turn to the next person\n"
     "• `/charge leave`: leave the queue\n"
-    "• `/charge extend`: add time when nobody's waiting\n"
+    "• `/charge extend`: add time in the last 10 minutes, when nobody's waiting\n"
     "• `/charge dashboard`: your personal dashboard link\n"
     "• `/charge login`: a sign-in code for the dashboard app\n"
     "Tip: open ChargeBot's *Home* tab for live status and one-tap buttons."
@@ -402,7 +403,8 @@ def queue_lines(state: State, now: float, cfg: Config, names: Names, viewer: Opt
     return f"📋 *Queue ({len(state.queue)})*\n" + "\n".join(rows)
 
 
-def viewer_buttons(state: State, cfg: Config, viewer: str, link: Optional[str] = None) -> Optional[Dict[str, Any]]:
+def viewer_buttons(state: State, cfg: Config, viewer: str, now: float,
+                   link: Optional[str] = None) -> Optional[Dict[str, Any]]:
     charger, session = state.session_of(viewer)
     btns: List[Optional[Dict[str, Any]]] = []
     if session is not None and not session.confirmed:
@@ -411,7 +413,7 @@ def viewer_buttons(state: State, cfg: Config, viewer: str, link: Optional[str] =
             btns.append(button("🔔 Nudge", A_NUDGE))
     elif session is not None:
         btns.append(button("🏁 I'm done and unplugged", A_DONE))
-        if not state.queue and session.extensions < cfg.max_extensions:
+        if can_extend(cfg, state, session, now):
             btns.append(button(f"➕ Extend {duration(cfg.extend_s)}", A_EXTEND))
     elif state.queue_position(viewer) is not None:
         btns.append(button("👋 Leave the queue", A_LEAVE, style="danger"))
@@ -432,7 +434,7 @@ def status_blocks(state: State, now: float, cfg: Config, names: Names, viewer: O
     return compact([
         *charger_lines(state, now, cfg, names),
         section(queue_lines(state, now, cfg, names, viewer)),
-        viewer_buttons(state, cfg, viewer, link) if viewer else None,
+        viewer_buttons(state, cfg, viewer, now, link) if viewer else None,
     ])
 
 
@@ -472,7 +474,7 @@ def home_view(state: State, now: float, cfg: Config, names: Names, viewer: str, 
         context(notice) if notice else None,
         *charger_lines(state, now, cfg, names),
         section(queue_lines(state, now, cfg, names, viewer)),
-        viewer_buttons(state, cfg, viewer, link),
+        viewer_buttons(state, cfg, viewer, now, link),
         context(f"Updated {when(now, '{time}')}. This page refreshes when something changes."),
         divider(),
         section("*Your settings*"),

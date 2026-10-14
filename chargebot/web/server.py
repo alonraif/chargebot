@@ -13,7 +13,7 @@ from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from ..config import Config
-from ..domain import State, charger_phase, queue_etas
+from ..domain import State, can_extend, charger_phase, queue_etas
 from ..engine import Engine
 from ..push import valid_subscription
 from ..stats import global_stats
@@ -111,14 +111,14 @@ class WebApp:
         return {"name": p.name, "avatar": p.avatar, "initials": _initials(p.name), "hue": _hue(user_id),
                 "is_me": user_id == viewer}
 
-    def my_actions(self, state: State, viewer: str) -> List[str]:
+    def my_actions(self, state: State, viewer: str, now: float) -> List[str]:
         charger, session = state.session_of(viewer)
         acts: List[str] = []
         if session is not None and not session.confirmed:
             acts += ["confirm", "skip"] + (["nudge"] if charger.unplug else [])
         elif session is not None:
             acts.append("done")
-            if not state.queue and session.extensions < self.cfg.max_extensions:
+            if can_extend(self.cfg, state, session, now):
                 acts.append("extend")
         elif state.queue_position(viewer) is not None:
             acts.append("leave")
@@ -165,7 +165,7 @@ class WebApp:
             "push_key": self.pusher.public_key if self.pusher and self.pusher.ready else None,
         }
         if viewer:
-            data["me"] = {"person": self.person(viewer, viewer), "actions": self.my_actions(state, viewer)}
+            data["me"] = {"person": self.person(viewer, viewer), "actions": self.my_actions(state, viewer, now)}
         return data
 
     def slack_url(self) -> Optional[str]:

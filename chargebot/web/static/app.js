@@ -197,7 +197,7 @@
     already_confirmed: "You're already charging.",
     not_offered: "It's not your turn right now.",
     queue_waiting: "Can't extend while people are waiting.",
-    max_extensions: "You've hit the extension limit.",
+    too_early: "You can extend in the last 10 minutes of your charge.",
     not_charging: "You're not charging right now.",
     nudge_too_soon: "You nudged recently. Give them a minute.",
     nothing_to_nudge: "There's nobody to nudge.",
