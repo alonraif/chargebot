@@ -173,6 +173,46 @@
       el("h2", { text: "🔔 Get notified on this device" }), body, el("div", { class: "btns" }, buttons)));
   }
 
+  // Why the signed-in person is where they are in the line, in plain words (only when a fair-line rule is on).
+  function plural(n, one, many) { return n + " " + (n === 1 ? one : many); }
+  function reasonLines(state) {
+    const r = state.rules, q = state.me && state.me.queue;
+    if (!q || !r || !(r.priority || r.pushdown)) return [];
+    const lines = [], a = q.ahead || {}, parts = [];
+    if (!q.position || q.position === 1) {
+      lines.push("You're next in line.");
+    } else {
+      if (a.pinned) parts.push(plural(a.pinned, "person", "people") + " moved up by an admin");
+      if (a.guaranteed) parts.push(plural(a.guaranteed, "person", "people") + " who've waited " + Math.round(r.nojump_s / 60) + "+ min");
+      if (a.fewer_charges) parts.push(plural(a.fewer_charges, "person", "people") + " with fewer charges this week");
+      if (a.you_were_pushed) parts.push(plural(a.you_were_pushed, "person", "people") + " because you moved down a place after a missed turn");
+      if (a.joined_earlier) parts.push(plural(a.joined_earlier, "person", "people") + " who joined before you");
+      lines.push("Ahead of you: " + parts.join(", ") + ".");
+    }
+    if (r.priority) {
+      if (q.guaranteed) lines.push("🛡 You've waited " + Math.round(r.nojump_s / 60) + "+ min, so nobody can go ahead of you now.");
+      else if (q.tier > 0 && q.guarantee_at) lines.push("🛡 Nobody can jump ahead of you after " + CB.clock(q.guarantee_at) + ".");
+    }
+    if (r.pushdown && q.strikes) lines.push("↩️ You missed a turn, so you moved down a place. Miss another and you'll leave the queue.");
+    return lines;
+  }
+
+  function weekCard(state) {
+    const w = state.me && state.me.week;
+    if (!w || !state.rules.priority) return null;
+    return el("section", { class: "card weekcard", "aria-label": "This week" },
+      el("b", { text: "🔋 You've charged " + w.count + "× this week" }),
+      el("span", { class: "muted small", text: " · starts fresh every Saturday night. When the charger frees up, people who've charged less go first." }));
+  }
+
+  function tagChips(tags) {
+    const out = [];
+    if (tags && tags.protected) out.push(el("span", { class: "chip tag", text: "🛡 protected" }));
+    if (tags && tags.second_chance) out.push(el("span", { class: "chip tag", text: "↩️ second chance" }));
+    if (tags && tags.priority) out.push(el("span", { class: "chip tag", text: "⭐ first charge this week" }));
+    return out.length ? el("div", { class: "tags" }, out) : null;
+  }
+
   function personRow(person, sub) {
     return el("div", { class: "who" }, CB.avatar(person),
       el("div", { style: "min-width:0" }, el("b", { text: person.is_me ? "You" : person.name }),
@@ -197,6 +237,10 @@
           el("div", { class: "fill", "data-from": c.charge_start, "data-to": c.ends_at, "data-label": labelId })),
         el("div", { class: "scale" }, el("span", { text: "0" }), el("span", { id: labelId }),
           el("span", { text: CB.minutes(c.ends_at - c.charge_start) + " min" })));
+      if (c.capped) {
+        card.append(el("p", { class: "muted small", style: "margin:12px 0 0",
+          text: "⏳ Rush-hour limit: someone is waiting, so this session ends at " + CB.clock(c.ends_at) + "." }));
+      }
     } else if (c.phase === "offered") {
       card.append(
         el("div", { class: "charger-head" },
@@ -245,20 +289,26 @@
       return card;
     }
     const myLeave = state.me && state.me.actions.includes("leave");
+    const why = reasonLines(state);
     for (const q of state.queue) {
       const eta = q.eta ? "around " + CB.clock(q.eta) : "when a charger frees up";
       card.append(el("div", { class: "qrow" + (q.user.is_me ? " me" : "") },
         el("span", { class: "pos", text: String(q.position).padStart(2, "0") }),
         CB.avatar(q.user, true),
         el("div", { class: "grow" }, el("b", { text: q.user.is_me ? "You" : q.user.name }),
-          el("span", { class: "muted small", text: (q.user.is_me ? "your turn " : "") + eta })),
+          el("span", { class: "muted small", text: (q.user.is_me ? "your turn " : "") + eta }),
+          tagChips(q.tags)),
         q.user.is_me && myLeave ? actionButton("leave") : null));
+      if (q.user.is_me && why.length) {
+        card.append(el("div", { class: "why muted small" }, why.map((line) => el("div", { text: line }))));
+      }
     }
     return card;
   }
 
   function render(state) {
-    const key = JSON.stringify([state.version, state.me, state.chargers.map((c) => c.phase)]);
+    const key = JSON.stringify([state.version, state.me, state.chargers.map((c) => [c.phase, c.capped]),
+      state.queue.map((q) => [q.position, q.tags])]);
     if (key === lastKey) return;
     lastKey = key;
     chargerFree = state.chargers.some((c) => c.phase === "free") && !state.queue.length;
@@ -279,6 +329,8 @@
           el("b", { text: "Hi " + state.me.person.name.split(" ")[0] + "!" })),
         el("div", { class: "btns", style: "justify-content:flex-start" }, extra.map(actionButton))));
     }
+    const week = weekCard(state);
+    if (week) nodes.push(week);
     nodes.push(queueCard(state));
     main.replaceChildren(...nodes);
 

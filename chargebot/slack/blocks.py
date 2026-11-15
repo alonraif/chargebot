@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import time
+from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import Config
-from ..domain import State, can_extend, charger_phase, queue_etas
+from ..domain import State, can_extend, charger_phase, in_rush, queue_entry_info, queue_etas, queue_info, week_count
 from ..stats import user_stats
 
 Names = Callable[[Optional[str]], str]
@@ -129,6 +130,78 @@ def dashboard_button(url: Optional[str]) -> Optional[Dict[str, Any]]:
 
 
 # ---------------------------------------------------------------------------
+# Fair-queue wording: why someone is where they are, and how often they've charged
+# ---------------------------------------------------------------------------
+
+
+def fair_rules_on(cfg: Config) -> bool:
+    return cfg.priority_queue or cfg.noshow_pushdown
+
+
+def reason_text(cfg: Config, info: Optional[Dict[str, Any]]) -> str:
+    """Plain-words explanation of a queued person's place. Empty when no fair-queue rule is on."""
+    if not info or not fair_rules_on(cfg):
+        return ""
+    ahead = info["ahead"]
+    lines: List[str] = []
+    if not ahead:
+        lines.append("You're next in line.")
+    else:
+        counts = Counter(a["why"] for a in ahead)
+        parts = []
+        if counts["pinned"]:
+            parts.append(f"{plural(counts['pinned'], 'person', 'people')} moved up by an admin")
+        if counts["guaranteed"]:
+            parts.append(f"{plural(counts['guaranteed'], 'person', 'people')} who've waited {mins(cfg.nojump_s)}+ min")
+        if counts["fewer_charges"]:
+            parts.append(f"{plural(counts['fewer_charges'], 'person', 'people')} with fewer charges this week")
+        if counts["you_were_pushed"]:
+            parts.append(f"{plural(counts['you_were_pushed'], 'person', 'people')} because you moved down a place "
+                         "after a missed turn")
+        if counts["joined_earlier"]:
+            parts.append(f"{plural(counts['joined_earlier'], 'person', 'people')} who joined before you")
+        lines.append("Ahead of you: " + ", ".join(parts) + ".")
+    if cfg.priority_queue:
+        if info["guaranteed"]:
+            lines.append(f"🛡 You've waited {mins(cfg.nojump_s)}+ min, so nobody can go ahead of you now.")
+        elif info["tier"] > 0 and info["guarantee_at"]:
+            lines.append(f"🛡 Nobody can jump ahead of you after {when(info['guarantee_at'])}.")
+    if cfg.noshow_pushdown and info["strikes"]:
+        lines.append("↩️ You missed a turn, so you moved down a place. Miss another and you'll leave the queue.")
+    return "\n".join(lines)
+
+
+def week_line(cfg: Config, state: State, viewer: str, now: float) -> Optional[Dict[str, Any]]:
+    """How many times this person has charged this week (private to them)."""
+    if not cfg.priority_queue:
+        return None
+    n = week_count(cfg, state, viewer, now)
+    return context(f"🔋 You've charged *{n}×* this week (the count starts fresh every Saturday night). "
+                   "When the charger frees up, people who've charged less go first.")
+
+
+def viewer_notes(state: State, now: float, cfg: Config, viewer: str) -> List[Optional[Dict[str, Any]]]:
+    notes: List[Optional[Dict[str, Any]]] = []
+    text = reason_text(cfg, queue_entry_info(cfg, state, viewer, now))
+    if text:
+        notes.append(context(text))
+    notes.append(week_line(cfg, state, viewer, now))
+    return notes
+
+
+def queue_tags(cfg: Config, info: Dict[str, Any], priority_matters: bool) -> str:
+    """Short public tags on a queue row. They explain the order without revealing anyone's exact count."""
+    tags = []
+    if info["guaranteed"]:
+        tags.append("🛡 protected")
+    if info["strikes"]:
+        tags.append("↩️ second chance")
+    if priority_matters and info["tier"] == 0 and not info["guaranteed"]:
+        tags.append("⭐ first charge this week")
+    return (" · " + " · ".join(tags)) if tags else ""
+
+
+# ---------------------------------------------------------------------------
 # DM notifications
 # ---------------------------------------------------------------------------
 
@@ -151,6 +224,9 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
                     f"or at {when(data['grace_ends_at'])} at the latest."),
             context(f"🚗 {names(prev)}'s session just ended. If their car's still plugged in, tap *Nudge*.")
             if prev else None,
+            context(f"🕖 Rush hours ({cfg.rush_start_hour:02d}:00–{cfg.rush_end_hour:02d}:00): if someone is "
+                    f"waiting, charges end after {duration(cfg.rush_cap_s)}.")
+            if cfg.rush_cap_s and in_rush(cfg, time.time()) else None,
             actions(confirm_btn, skip_btn, button("🔔 Nudge", A_NUDGE) if prev else None, dashboard_button(link)),
         ])
         return text, blocks
@@ -189,6 +265,19 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
             actions(button("📋 Join the queue again", A_JOIN)),
         ])
 
+    if kind == "pushed_down":
+        if data.get("second_chance"):
+            text = "⌛ You missed your turn. You get one more chance."
+            return text, [section("*⌛ You missed your turn.* Nobody else is waiting, so the charger is offered to "
+                                  "you again right away. Check the next message. If you miss it again you'll "
+                                  "lose your turn.")]
+        text = "⌛ You missed your turn and moved down one place."
+        return text, compact([
+            section(f"*⌛ You missed your turn,* so it went to the next person. You're now *#{data.get('position')}* "
+                    "in line and you keep your place in the wait. Miss your next turn and you'll leave the queue."),
+            actions(button("Leave the queue", A_LEAVE)),
+        ])
+
     if kind == "charging":
         text = f"⚡ You're charging{on}. Done at {when(data['ends_at'])}."
         return text, compact([
@@ -197,6 +286,15 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
                     + (" A calendar reminder is on its way to your inbox." if cfg.gmail_ready
                        and state and state.wants_email(data.get('user_id', '')) else "")),
             actions(done_btn, dashboard_button(link)),
+        ])
+
+    if kind == "warn_end" and data.get("capped"):
+        text = f"⏳ Rush-hour limit: your session ends at {when(data['ends_at'])}."
+        return text, compact([
+            section(f"*⏳ Rush-hour limit{on}.* Someone is waiting, so charges that start between "
+                    f"{cfg.rush_start_hour:02d}:00 and {cfg.rush_end_hour:02d}:00 end after "
+                    f"{duration(cfg.rush_cap_s)}. Your session ends at {when(data['ends_at'])}."),
+            actions(done_btn),
         ])
 
     if kind == "warn_end":
@@ -210,6 +308,8 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
     if kind == "time_up":
         nxt = data.get("next_user_id")
         tail = f" *{names(nxt)}* is up next." if nxt else ""
+        if data.get("capped"):
+            tail = " (rush-hour limit)" + tail
         text = f"🏁 Time's up{on}. Unplug and move your car."
         return text, compact([section(f"*🏁 Time's up{on}.* Unplug and move your car.{tail}"),
                               actions(unplugged_btn)])
@@ -264,6 +364,11 @@ def closed(reason: str, data: Dict[str, Any]) -> Tuple[str, List[Dict[str, Any]]
 # ---------------------------------------------------------------------------
 
 
+def _why_suffix(cfg: Config, data: Dict[str, Any]) -> str:
+    text = reason_text(cfg, data.get("why"))
+    return "\n" + text if text else ""
+
+
 def reply(code: str, data: Dict[str, Any], cfg: Config, state: Optional[State], names: Names) -> str:
     on = on_charger(cfg, state, data.get("charger_id"))
     eta = data.get("eta")
@@ -272,10 +377,11 @@ def reply(code: str, data: Dict[str, Any], cfg: Config, state: Optional[State], 
         "offered": f"🔌 The charger is yours{on}. Plug in and confirm by {when(data.get('confirm_deadline'))}. "
                    "Your buttons are in our DM.",
         "queued": f"📋 You're *#{data.get('position')}* in line. Estimated turn: {eta_text}. "
-                  "I'll DM you when it's yours.",
+                  "I'll DM you when it's yours." + _why_suffix(cfg, data),
         "already_active": (f"⚡ You're already charging{on}." if data.get("confirmed")
                            else f"🔌 The charger is already reserved for you{on}. Confirm in our DM."),
-        "already_queued": f"📋 You're already *#{data.get('position')}* in line. Estimated turn: {eta_text}.",
+        "already_queued": f"📋 You're already *#{data.get('position')}* in line. Estimated turn: {eta_text}."
+                          + _why_suffix(cfg, data),
         "confirmed": f"⚡ Confirmed. Charging{on} until {when(data.get('ends_at'))}.",
         "already_confirmed": f"⚡ You're already confirmed. Charging until {when(data.get('ends_at'))}.",
         "not_offered": "It's not your turn yet. I'll DM you when it is.",
@@ -353,9 +459,23 @@ HELP = (
 )
 
 
+def fair_help(cfg: Config) -> str:
+    lines = []
+    if cfg.priority_queue:
+        lines.append("• *Fair line:* people who've charged less this week go first (the count starts fresh every Saturday night). "
+                     f"Wait {mins(cfg.nojump_s)} min and nobody can jump ahead of you.")
+    if cfg.rush_cap_s:
+        lines.append(f"• *Rush hours* ({cfg.rush_start_hour:02d}:00–{cfg.rush_end_hour:02d}:00): if someone is "
+                     f"waiting, charges end after {duration(cfg.rush_cap_s)}. If nobody is, keep going.")
+    if cfg.noshow_pushdown:
+        lines.append("• *Missed your turn?* You move down one place instead of leaving the queue. Miss twice and "
+                     "you leave it.")
+    return ("\n" + "\n".join(lines)) if lines else ""
+
+
 def help_text(cfg: Config) -> str:
     guide = f"\n📖 Full guide, including installing the app: {cfg.public_base_url}/guide" if cfg.public_base_url else ""
-    return HELP + guide
+    return HELP + fair_help(cfg) + guide
 
 ADMIN_HELP = (
     "*Admin*\n"
@@ -395,11 +515,13 @@ def queue_lines(state: State, now: float, cfg: Config, names: Names, viewer: Opt
     if not state.queue:
         return "📋 *Queue:* nobody's waiting."
     etas = queue_etas(cfg, state, now)
+    infos = queue_info(cfg, state, now)
+    matters = cfg.priority_queue and any(i["tier"] > 0 for i in infos)
     rows = []
-    for i, (entry, eta) in enumerate(zip(state.queue, etas)):
-        who = "*you*" if entry.user_id == viewer else names(entry.user_id)
+    for info, eta in zip(infos, etas):
+        who = "*you*" if info["user_id"] == viewer else names(info["user_id"])
         est = f" · est. {when(eta)}" if eta else ""
-        rows.append(f"{i + 1}. {who}{est}")
+        rows.append(f"{info['position']}. {who}{est}{queue_tags(cfg, info, matters)}")
     return f"📋 *Queue ({len(state.queue)})*\n" + "\n".join(rows)
 
 
@@ -434,6 +556,7 @@ def status_blocks(state: State, now: float, cfg: Config, names: Names, viewer: O
     return compact([
         *charger_lines(state, now, cfg, names),
         section(queue_lines(state, now, cfg, names, viewer)),
+        *(viewer_notes(state, now, cfg, viewer) if viewer else []),
         viewer_buttons(state, cfg, viewer, now, link) if viewer else None,
     ])
 
@@ -474,6 +597,7 @@ def home_view(state: State, now: float, cfg: Config, names: Names, viewer: str, 
         context(notice) if notice else None,
         *charger_lines(state, now, cfg, names),
         section(queue_lines(state, now, cfg, names, viewer)),
+        *viewer_notes(state, now, cfg, viewer),
         viewer_buttons(state, cfg, viewer, now, link),
         context(f"Updated {when(now, '{time}')}. This page refreshes when something changes."),
         divider(),
@@ -533,7 +657,9 @@ def admin_modal(state: State, now: float, cfg: Config, names: Names, notice: Opt
             if i > 0:
                 options.append({"text": {"type": "plain_text", "text": "Move up"}, "value": f"up:{entry.user_id}"})
             options.append({"text": {"type": "plain_text", "text": "Remove"}, "value": f"remove:{entry.user_id}"})
-            blocks.append(section(f"{i + 1}. {names(entry.user_id)}",
+            extra = (f" · {week_count(cfg, state, entry.user_id, now)}× this week"
+                     + (" · 📌 pinned" if entry.pinned else "")) if cfg.priority_queue else ""
+            blocks.append(section(f"{i + 1}. {names(entry.user_id)}{extra}",
                                   {"type": "overflow", "action_id": A_ADMIN_QUEUE, "options": options}))
     blocks.append(context("Custom out-of-order reason: `/charge admin out <reason>`"))
     return {

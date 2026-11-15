@@ -9,10 +9,23 @@ should do (send a DM, update a message, send a calendar invite, ...).
 from __future__ import annotations
 
 import math
-from dataclasses import asdict, dataclass, field
+from dataclasses import asdict, dataclass, field, fields
+from datetime import datetime, timedelta
 from typing import Any, Dict, List, Optional, Tuple
 
 from .config import Config
+from .stats import _tz
+
+# Outcomes that count as "a charge this week" (and only when the session was confirmed).
+COUNTED_OUTCOMES = ("completed", "ended_early")
+# A rush-hour cap is only applied if there are at least this many seconds left to warn the user.
+CAP_MIN_NOTICE_S = 3 * 60
+
+
+def _known(cls: Any, data: Dict[str, Any]) -> Dict[str, Any]:
+    """Keep only the keys a dataclass knows, so saved state from a newer version still loads."""
+    names = {f.name for f in fields(cls)}
+    return {k: v for k, v in data.items() if k in names}
 
 # ---------------------------------------------------------------------------
 # Effects
@@ -89,6 +102,9 @@ class Session:
     invite_uid: Optional[str] = None
     invite_seq: int = 0
     messages: List[Dict[str, str]] = field(default_factory=list)
+    strikes: int = 0                      # missed turns in this wait (carried from the queue entry)
+    capped: bool = False                  # cut short by the rush-hour cap
+    uncapped_ends_at: Optional[float] = None
 
     @property
     def confirmed(self) -> bool:
@@ -120,6 +136,9 @@ class QueueEntry:
     user_id: str
     joined_at: float
     heads_up_sent: bool = False
+    strikes: int = 0        # missed turns during this wait
+    pushed: bool = False    # moved down one place after a missed turn; cleared once someone else is offered
+    pinned: bool = False    # an admin moved this person to the front
 
 
 @dataclass
@@ -128,6 +147,8 @@ class State:
     queue: List[QueueEntry] = field(default_factory=list)
     prefs: Dict[str, Dict[str, Any]] = field(default_factory=dict)
     meta: Dict[str, Any] = field(default_factory=dict)
+    # Charges per person in the current week: {"start": <week start>, "counts": {user_id: n}}.
+    weekly: Dict[str, Any] = field(default_factory=dict)
     seq: int = 0
     version: int = 0
 
@@ -139,7 +160,7 @@ class State:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "State":
         def session(d: Optional[Dict[str, Any]]) -> Optional[Session]:
-            return Session(**d) if d else None
+            return Session(**_known(Session, d)) if d else None
 
         chargers = []
         for c in data.get("chargers", []):
@@ -149,14 +170,15 @@ class State:
                 name=c["name"],
                 session=session(c.get("session")),
                 out_of_order=c.get("out_of_order"),
-                unplug=Unplug(**unplug) if unplug else None,
+                unplug=Unplug(**_known(Unplug, unplug)) if unplug else None,
                 reclaim=session(c.get("reclaim")),
             ))
         return cls(
             chargers=chargers,
-            queue=[QueueEntry(**q) for q in data.get("queue", [])],
+            queue=[QueueEntry(**_known(QueueEntry, q)) for q in data.get("queue", [])],
             prefs=dict(data.get("prefs", {})),
             meta=dict(data.get("meta", {})),
+            weekly=dict(data.get("weekly", {})),
             seq=int(data.get("seq", 0)),
             version=int(data.get("version", 0)),
         )
@@ -228,29 +250,143 @@ def _fail(code: str, **data: Any) -> Result:
 # ---------------------------------------------------------------------------
 
 
-def charger_free_at(cfg: Config, charger: Charger, now: float) -> Optional[float]:
+def week_start(cfg: Config, now: float) -> float:
+    """Start of the current week (Sunday 00:00 in the configured timezone) as a timestamp."""
+    d = datetime.fromtimestamp(now, _tz(cfg.timezone))
+    sunday = d - timedelta(days=(d.weekday() + 1) % 7)
+    return sunday.replace(hour=0, minute=0, second=0, microsecond=0).timestamp()
+
+
+def week_count(cfg: Config, state: State, user_id: str, now: float) -> int:
+    """How many charges this person has had this week. Stale (older-week) counts read as zero."""
+    if state.weekly.get("start") != week_start(cfg, now):
+        return 0
+    return int(state.weekly.get("counts", {}).get(user_id, 0))
+
+
+def tier_of(count: int) -> int:
+    """0 = no charges yet this week, 1 = one charge, 2 = two or more."""
+    return min(count, 2)
+
+
+def in_rush(cfg: Config, ts: float) -> bool:
+    """Is this moment inside the rush window? Only matters when the cap is on."""
+    if not cfg.rush_cap_s:
+        return False
+    hour = datetime.fromtimestamp(ts, _tz(cfg.timezone)).hour
+    return cfg.rush_start_hour <= hour < cfg.rush_end_hour
+
+
+def charge_len_s(cfg: Config, start: float, others_waiting: bool) -> int:
+    """Planned charge length for a session starting at ``start``."""
+    if others_waiting and in_rush(cfg, start):
+        return min(cfg.charge_s, cfg.rush_cap_s)
+    return cfg.charge_s
+
+
+def charger_free_at(cfg: Config, charger: Charger, now: float,
+                    queue_waiting: bool = False) -> Optional[float]:
     """Best guess of when a charger can be offered to someone new."""
     if charger.out_of_order:
         return None
     s = charger.session
     if s is None:
         return now
-    if s.ends_at is not None:
-        return max(now, s.ends_at)
-    return max(now, s.grace_ends_at + cfg.charge_s)
+    start = s.charge_start if s.charge_start is not None else s.grace_ends_at
+    end = s.ends_at if s.ends_at is not None else start + cfg.charge_s
+    if queue_waiting and in_rush(cfg, start):
+        end = min(end, start + cfg.rush_cap_s)
+    return max(now, end)
 
 
 def queue_etas(cfg: Config, state: State, now: float) -> List[Optional[float]]:
     """Estimated offer time for each queue entry, in queue order."""
-    free = [t for t in (charger_free_at(cfg, c, now) for c in state.chargers) if t is not None]
+    waiting = bool(state.queue)
+    free = [t for t in (charger_free_at(cfg, c, now, waiting) for c in state.chargers) if t is not None]
     if not free:
         return [None] * len(state.queue)
     etas: List[Optional[float]] = []
     for _ in state.queue:
         i = min(range(len(free)), key=lambda k: free[k])
         etas.append(free[i])
-        free[i] = free[i] + cfg.grace_s + cfg.charge_s
+        # Everyone ahead of a queued person has someone waiting behind them, so the cap applies.
+        free[i] = free[i] + cfg.grace_s + charge_len_s(cfg, free[i] + cfg.grace_s, True)
     return etas
+
+
+# -- queue order and the "why am I here?" read model ---------------------------
+
+
+def is_guaranteed(cfg: Config, entry: QueueEntry, now: float) -> bool:
+    """Waited long enough that nobody can be put ahead of them any more."""
+    return cfg.priority_queue and now - entry.joined_at >= cfg.nojump_s
+
+
+def order_key(cfg: Config, state: State, entry: QueueEntry, now: float) -> Tuple[int, int, int, float]:
+    """Sort key: admin pins, then guaranteed waiters (by join time), then fewest charges this week."""
+    guaranteed = is_guaranteed(cfg, entry, now)
+    tier = 0 if (guaranteed or not cfg.priority_queue) else tier_of(week_count(cfg, state, entry.user_id, now))
+    return (0 if entry.pinned else 1, 0 if guaranteed else 1, tier, entry.joined_at)
+
+
+def ordered_queue(cfg: Config, state: State, now: float) -> List[QueueEntry]:
+    """The queue in the order people will be offered the charger."""
+    if not (cfg.priority_queue or cfg.noshow_pushdown):
+        return list(state.queue)
+    lst = sorted(state.queue, key=lambda e: order_key(cfg, state, e, now))
+    # A pushed-down person at the front steps back behind the next person (once).
+    if lst and lst[0].pushed:
+        nxt = next((i for i, e in enumerate(lst) if not e.pushed), None)
+        if nxt is not None:
+            lst.insert(nxt, lst.pop(0))
+    return lst
+
+
+def queue_entry_info(cfg: Config, state: State, user_id: str, now: float) -> Optional[Dict[str, Any]]:
+    """The "why am I here?" record for one queued person, or None if they aren't queued."""
+    return next((i for i in queue_info(cfg, state, now) if i["user_id"] == user_id), None)
+
+
+def queue_info(cfg: Config, state: State, now: float) -> List[Dict[str, Any]]:
+    """For each queued person: why they are where they are. Shared by Slack and the web."""
+    q = ordered_queue(cfg, state, now)
+    out: List[Dict[str, Any]] = []
+    for i, entry in enumerate(q):
+        count = week_count(cfg, state, entry.user_id, now)
+        guaranteed = is_guaranteed(cfg, entry, now)
+        ahead = []
+        for other in q[:i]:
+            if other.pinned and not entry.pinned:
+                why = "pinned"
+            elif is_guaranteed(cfg, other, now) and not guaranteed:
+                why = "guaranteed"
+            elif not cfg.priority_queue or guaranteed:
+                why = "joined_earlier"
+            elif tier_of(week_count(cfg, state, other.user_id, now)) < tier_of(count):
+                why = "fewer_charges"
+            elif entry.pushed:
+                why = "you_were_pushed"
+            else:
+                why = "joined_earlier"
+            ahead.append({"user_id": other.user_id, "why": why})
+        reason = "first"
+        for code in ("pinned", "guaranteed", "fewer_charges", "you_were_pushed", "joined_earlier"):
+            if any(a["why"] == code for a in ahead):
+                reason = code
+                break
+        out.append({
+            "user_id": entry.user_id,
+            "position": i + 1,
+            "week_count": count,
+            "tier": tier_of(count),
+            "guaranteed": guaranteed,
+            "guarantee_at": None if (guaranteed or not cfg.priority_queue) else entry.joined_at + cfg.nojump_s,
+            "pushed": entry.pushed,
+            "strikes": entry.strikes,
+            "reason": reason,
+            "ahead": ahead,
+        })
+    return out
 
 
 def extend_opens_at(cfg: Config, session: Session) -> Optional[float]:
@@ -287,8 +423,24 @@ class Rules:
             result.effects.append(CloseMessages(refs=list(holder.messages), reason=reason, data=data))
             holder.messages = []
 
+    def _order(self, state: State, now: float, result: Result) -> None:
+        """Put the queue in offer order. Only touches the state when the order really changes."""
+        if not (self.cfg.priority_queue or self.cfg.noshow_pushdown):
+            return
+        ordered = ordered_queue(self.cfg, state, now)
+        if [id(e) for e in ordered] != [id(e) for e in state.queue]:
+            state.queue[:] = ordered
+            result.changed = True
+
+    def _bump_week(self, state: State, user_id: str, now: float) -> None:
+        start = week_start(self.cfg, now)
+        if state.weekly.get("start") != start:
+            state.weekly = {"start": start, "counts": {}}
+        counts = state.weekly.setdefault("counts", {})
+        counts[user_id] = int(counts.get(user_id, 0)) + 1
+
     def _offer(self, state: State, charger: Charger, user_id: str, joined_at: float,
-               now: float, result: Result) -> Session:
+               now: float, result: Result, strikes: int = 0) -> Session:
         if charger.reclaim is not None:
             self._close(result, charger.reclaim, "reclaim_expired")
             charger.reclaim = None
@@ -301,6 +453,7 @@ class Rules:
             offered_at=now,
             grace_ends_at=now + self.cfg.grace_s,
             confirm_deadline=now + self.cfg.confirm_s,
+            strikes=strikes,
         )
         charger.session = session
         result.effects.append(Notify(user_id, "offered", {
@@ -314,12 +467,16 @@ class Rules:
 
     def _promote(self, state: State, now: float, result: Result) -> None:
         for charger in state.free_chargers():
+            self._order(state, now, result)
             if not state.queue:
                 return
             entry = state.queue.pop(0)
-            self._offer(state, charger, entry.user_id, entry.joined_at, now, result)
+            # Someone has been offered the charger, so a pushed-down person has now stepped back.
+            for other in state.queue:
+                other.pushed = False
+            self._offer(state, charger, entry.user_id, entry.joined_at, now, result, strikes=entry.strikes)
 
-    def _log(self, result: Result, session: Session, now: float, outcome: str) -> None:
+    def _log(self, state: State, result: Result, session: Session, now: float, outcome: str) -> None:
         result.effects.append(LogSession({
             "id": session.id,
             "user_id": session.user_id,
@@ -331,13 +488,18 @@ class Rules:
             "ended_at": now,
             "extensions": session.extensions,
             "outcome": outcome,
+            "capped": session.capped,
+            "strikes": session.strikes,
+            "week_charges_before": week_count(self.cfg, state, session.user_id, now),
         }))
 
     def _end(self, state: State, charger: Charger, now: float, outcome: str,
              result: Result, close_reason: Optional[str] = None) -> Session:
         session = charger.session
         assert session is not None
-        self._log(result, session, now, outcome)
+        self._log(state, result, session, now, outcome)
+        if session.confirmed and outcome in COUNTED_OUTCOMES:
+            self._bump_week(state, session.user_id, now)
         if session.invite_uid and outcome != "completed":
             ends = session.ends_at or now
             result.effects.append(CancelInvite(
@@ -369,6 +531,33 @@ class Rules:
         }, track=session.id))
         result.changed = True
 
+    def _maybe_cap(self, state: State, s: Session, now: float, result: Result) -> None:
+        """Rush-hour soft cap: shorten a charge to the cap length, but only if someone is waiting.
+
+        The decision is made once, shortly before the cap time, so the user always gets a
+        warning first. If nobody is waiting then, the charge simply runs its full length.
+        """
+        cfg = self.cfg
+        if not cfg.rush_cap_s or s.capped or s.charge_start is None or s.ends_at is None or not state.queue:
+            return
+        if not in_rush(cfg, s.charge_start):
+            return
+        target = s.charge_start + cfg.rush_cap_s
+        if s.ends_at <= target:
+            return
+        notice = max(cfg.warn_before_end_s, CAP_MIN_NOTICE_S)
+        if not (target - notice <= now <= target - CAP_MIN_NOTICE_S):
+            return
+        s.uncapped_ends_at = s.ends_at
+        s.ends_at = target
+        s.capped = True
+        s.warned = False  # so the usual "ending soon" warning goes out, now with the reason
+        if s.invite_uid:
+            s.invite_seq += 1
+            result.effects.append(SendInvite(
+                s.user_id, s.invite_uid, s.ends_at, s.ends_at + cfg.grace_s, s.invite_seq))
+        result.changed = True
+
     def _eta_for(self, state: State, user_id: str, now: float) -> Optional[float]:
         pos = state.queue_position(user_id)
         if pos is None:
@@ -383,7 +572,8 @@ class Rules:
             return _fail("already_active", charger_id=charger.id, confirmed=session.confirmed)
         pos = state.queue_position(user_id)
         if pos is not None:
-            return _fail("already_queued", position=pos + 1, eta=self._eta_for(state, user_id, now))
+            return _fail("already_queued", position=pos + 1, eta=self._eta_for(state, user_id, now),
+                         why=queue_entry_info(self.cfg, state, user_id, now))
 
         result = Result(code="offered")
         free = state.free_chargers()
@@ -395,11 +585,13 @@ class Rules:
 
         entry = QueueEntry(user_id=user_id, joined_at=now)
         state.queue.append(entry)
+        self._order(state, now, result)
         eta = self._eta_for(state, user_id, now)
         if eta is not None and eta - now <= self.cfg.next_up_heads_up_s:
             entry.heads_up_sent = True
         result.code = "queued"
-        result.data = {"position": len(state.queue), "eta": eta}
+        result.data = {"position": state.queue_position(user_id) + 1, "eta": eta,
+                       "why": queue_entry_info(self.cfg, state, user_id, now)}
         result.changed = True
         return self._done(result)
 
@@ -562,8 +754,13 @@ class Rules:
             return _fail("not_queued")
         if pos == 0:
             return _fail("already_first")
-        q = state.queue
-        q[pos - 1], q[pos] = q[pos], q[pos - 1]
+        if self.cfg.priority_queue or self.cfg.noshow_pushdown:
+            # Ordering is computed, so a manual move pins the person above the normal order.
+            state.queue[pos].pinned = True
+            self._order(state, now, Result(code="order"))
+        else:
+            q = state.queue
+            q[pos - 1], q[pos] = q[pos], q[pos - 1]
         return self._done(Result(code="moved", changed=True))
 
     def set_out_of_order(self, state: State, charger_id: str, reason: Optional[str], now: float) -> Result:
@@ -583,6 +780,8 @@ class Rules:
         result = Result(code="tick")
         alerts = cfg.confirm_alerts_s
 
+        self._order(state, now, result)
+
         for charger in list(state.chargers):
             s = charger.session
             if s is not None and not s.confirmed:
@@ -590,6 +789,22 @@ class Rules:
                     s.charge_start = s.grace_ends_at
                     s.ends_at = s.charge_start + cfg.charge_s
                     result.changed = True
+
+                if now >= s.confirm_deadline and cfg.noshow_pushdown and s.strikes == 0:
+                    # First missed turn: step back one place and keep the original join time,
+                    # so the wait (and the no-jump guarantee) carries on.
+                    alone = not state.queue
+                    lost = self._end(state, charger, now, "no_show", result, close_reason="no_show")
+                    state.queue.append(QueueEntry(
+                        user_id=lost.user_id, joined_at=lost.joined_at, strikes=1, pushed=True,
+                        heads_up_sent=True))
+                    self._order(state, now, result)
+                    result.effects.append(Notify(lost.user_id, "pushed_down", {
+                        "charger_id": charger.id,
+                        "second_chance": alone,
+                        "position": state.queue_position(lost.user_id) + 1,
+                    }))
+                    continue
 
                 if now >= s.confirm_deadline:
                     reclaimable = not state.queue
@@ -617,19 +832,21 @@ class Rules:
                     result.changed = True
 
             elif s is not None and s.ends_at is not None:
+                self._maybe_cap(state, s, now, result)
                 if now >= s.ends_at:
                     next_user = state.queue[0].user_id if state.queue else None
                     self._end(state, charger, now, "completed", result, close_reason="completed")
                     self._close(result, charger.unplug, "unplugged", at=now)
                     charger.unplug = Unplug(user_id=s.user_id, since=now)
                     result.effects.append(Notify(s.user_id, "time_up", {
-                        "charger_id": charger.id, "next_user_id": next_user,
+                        "charger_id": charger.id, "next_user_id": next_user, "capped": s.capped,
                     }, track=f"unplug:{charger.id}"))
                 elif not s.warned and now >= s.ends_at - cfg.warn_before_end_s:
                     s.warned = True
                     extendable = can_extend(cfg, state, s, now)
                     result.effects.append(Notify(s.user_id, "warn_end", {
                         "charger_id": charger.id, "ends_at": s.ends_at, "can_extend": extendable,
+                        "capped": s.capped,
                     }, track=s.id))
                     result.changed = True
 

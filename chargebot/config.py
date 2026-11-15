@@ -18,6 +18,10 @@ def _minutes(env: Mapping[str, str], key: str, default: float) -> int:
     return int(float(raw) * 60)
 
 
+def _flag(env: Mapping[str, str], key: str) -> bool:
+    return (env.get(key) or "").strip().lower() in ("1", "true", "yes", "on")
+
+
 def _list(env: Mapping[str, str], key: str, default: str = "") -> Tuple[str, ...]:
     raw = env.get(key, default) or ""
     return tuple(part.strip() for part in raw.split(",") if part.strip())
@@ -40,6 +44,19 @@ class Config:
     extend_s: int = 30 * 60
     next_up_heads_up_s: int = 15 * 60
     nudge_cooldown_s: int = 5 * 60
+
+    # Fair-queue rules. All off by default so deploying the code changes nothing.
+    # priority_queue: people with fewer charges this week go first (see domain.order_key).
+    priority_queue: bool = False
+    # Anyone who has waited this long can no longer be overtaken (only with priority_queue).
+    nojump_s: int = 90 * 60
+    # A missed turn moves the person down one place instead of dropping them (once).
+    noshow_pushdown: bool = False
+    # Soft cap: during the rush window a charge is cut to this length, but only when
+    # someone is waiting as it approaches. 0 turns the cap off.
+    rush_cap_s: int = 0
+    rush_start_hour: int = 7
+    rush_end_hour: int = 13
 
     # Slack channels and people.
     state_channel_id: Optional[str] = None
@@ -111,6 +128,12 @@ class Config:
             extend_s=_minutes(env, "EXTEND_MIN", 30),
             next_up_heads_up_s=_minutes(env, "NEXT_UP_HEADS_UP_MIN", 15),
             nudge_cooldown_s=_minutes(env, "NUDGE_COOLDOWN_MIN", 5),
+            priority_queue=_flag(env, "PRIORITY_QUEUE"),
+            nojump_s=_minutes(env, "NOJUMP_MIN", 90),
+            noshow_pushdown=_flag(env, "NOSHOW_PUSHDOWN"),
+            rush_cap_s=_minutes(env, "RUSH_CAP_MIN", 0),
+            rush_start_hour=int(env.get("RUSH_START_HOUR") or 7),
+            rush_end_hour=int(env.get("RUSH_END_HOUR") or 13),
             state_channel_id=env.get("STATE_CHANNEL_ID") or None,
             status_channel_id=env.get("STATUS_CHANNEL_ID") or None,
             admin_user_ids=frozenset(_list(env, "ADMIN_USER_IDS")),

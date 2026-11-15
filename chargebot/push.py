@@ -111,6 +111,17 @@ def message(kind: str, data: Dict[str, Any], cfg: Config,
                         [{"action": "reclaim", "title": "Reclaim it"}], sticky=True)
         return note("⌛ Your turn passed", "It wasn't confirmed in time, so the charger went to the next person.",
                     "cb-turn", 3600)
+    if kind == "pushed_down":
+        if data.get("second_chance"):
+            return note("⌛ You missed your turn", "Nobody else is waiting, so you get one more chance right away.",
+                        "cb-turn", 600)
+        return note("⌛ You moved down one place",
+                    f"You missed your turn. You're now #{data.get('position')} and keep your place in the wait.",
+                    "cb-turn", 3600)
+    if kind == "warn_end" and data.get("capped"):
+        return note("⏳ Rush-hour limit",
+                    f"Someone is waiting, so your session ends at {at(data.get('ends_at'))}.", "cb-session", 600,
+                    [{"action": "done", "title": "I'm done"}])
     if kind == "warn_end":
         actions = [{"action": "done", "title": "I'm done"}]
         if data.get("can_extend"):

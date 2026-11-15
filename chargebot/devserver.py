@@ -1,6 +1,8 @@
 """Run the dashboard locally with fake people and history, without Slack.
 
-    python -m chargebot.devserver [--chargers 2] [--port 8080]
+    python -m chargebot.devserver [--chargers 2] [--port 8080] [--fair]
+
+--fair turns on the fair-queue rules (priority by weekly charges, no-jump guarantee, push-down, rush cap).
 
 Prints a magic link (acting as "You") and a kiosk link. Nothing is sent anywhere.
 """
@@ -12,6 +14,7 @@ import random
 import time
 
 from .config import Config
+from .domain import week_start
 from .engine import Engine
 from .push import PushSender, generate_keys
 from .scheduler import Scheduler
@@ -54,16 +57,22 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--port", type=int, default=8080)
     parser.add_argument("--chargers", type=int, default=1)
+    parser.add_argument("--fair", action="store_true", help="turn on the fair-queue rules")
     args = parser.parse_args()
 
     names = tuple(f"Charger {i + 1}" for i in range(args.chargers))
     cfg = Config(web_secret="dev-secret", kiosk_key="dev-kiosk", chargers=names, port=args.port,
                  slack_app_id="A0DEV", slack_team_id="T0DEV", tick_s=2,
+                 priority_queue=args.fair, noshow_pushdown=args.fair, rush_cap_s=90 * 60 if args.fair else 0,
                  vapid_private_key=generate_keys()["VAPID_PRIVATE_KEY"])
     store = MemoryStore()
     store.log = fake_history(time.time())
     engine = Engine(cfg, store)
     engine.load()
+
+    if args.fair:
+        # "You" have charged twice this week, Dana never, Omer once, so the line reorders.
+        engine.state.weekly = {"start": week_start(cfg, time.time()), "counts": {"UME": 2, "U2": 0, "U7": 1}}
 
     # Someone charging for a while, someone queued, and you in line.
     engine.act("join", "U1")

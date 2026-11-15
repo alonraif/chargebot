@@ -8,12 +8,13 @@ import logging
 import mimetypes
 import os
 import threading
+from collections import Counter
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable, Dict, List, Optional
 from urllib.parse import parse_qs, urlparse
 
 from ..config import Config
-from ..domain import State, can_extend, charger_phase, queue_etas
+from ..domain import State, can_extend, charger_phase, queue_etas, queue_info, week_count
 from ..engine import Engine
 from ..push import valid_subscription
 from ..stats import global_stats
@@ -146,11 +147,17 @@ class WebApp:
                 "confirm_deadline": s.confirm_deadline if s and not s.confirmed else None,
                 "charge_start": s.charge_start if s else None,
                 "ends_at": s.ends_at if s else None,
+                "capped": bool(s and s.capped),
                 "unplug_user": self.person(c.unplug.user_id, viewer) if c.unplug else None,
             })
         etas = queue_etas(self.cfg, state, now)
-        queue = [{"position": i + 1, "user": self.person(e.user_id, viewer), "eta": eta}
-                 for i, (e, eta) in enumerate(zip(state.queue, etas))]
+        infos = queue_info(self.cfg, state, now)
+        # Anyone can see short tags that explain the order. Exact counts and user ids never leave the server.
+        matters = self.cfg.priority_queue and any(i["tier"] > 0 for i in infos)
+        queue = [{"position": i["position"], "user": self.person(i["user_id"], viewer), "eta": eta,
+                  "tags": {"protected": i["guaranteed"], "second_chance": bool(i["strikes"]),
+                           "priority": bool(matters and i["tier"] == 0 and not i["guaranteed"])}}
+                 for i, eta in zip(infos, etas)]
         data: Dict[str, Any] = {
             "now": now,
             "version": state.version,
@@ -159,14 +166,33 @@ class WebApp:
                           "confirm_s": self.cfg.confirm_s},
             "chargers": chargers,
             "queue": queue,
+            "rules": self.rules_json(),
             "slack_url": self.slack_url(),
             "me": None,
             "kiosk_can_confirm": kiosk,
             "push_key": self.pusher.public_key if self.pusher and self.pusher.ready else None,
         }
         if viewer:
-            data["me"] = {"person": self.person(viewer, viewer), "actions": self.my_actions(state, viewer, now)}
+            mine = next((i for i in infos if i["user_id"] == viewer), None)
+            data["me"] = {
+                "person": self.person(viewer, viewer),
+                "actions": self.my_actions(state, viewer, now),
+                # Private to the viewer: how often they've charged this week, and why they're where they are.
+                "week": {"count": week_count(self.cfg, state, viewer, now)} if self.cfg.priority_queue else None,
+                "queue": {
+                    "position": mine["position"], "reason": mine["reason"], "tier": mine["tier"],
+                    "guaranteed": mine["guaranteed"], "guarantee_at": mine["guarantee_at"],
+                    "strikes": mine["strikes"],
+                    "ahead": dict(Counter(a["why"] for a in mine["ahead"])),
+                } if mine else None,
+            }
         return data
+
+    def rules_json(self) -> Dict[str, Any]:
+        cfg = self.cfg
+        return {"priority": cfg.priority_queue, "pushdown": cfg.noshow_pushdown, "nojump_s": cfg.nojump_s,
+                "rush_cap_s": cfg.rush_cap_s, "rush_start": cfg.rush_start_hour, "rush_end": cfg.rush_end_hour,
+                "charge_s": cfg.charge_s}
 
     def slack_url(self) -> Optional[str]:
         if not self.cfg.slack_app_id:

@@ -53,15 +53,25 @@
     return wrap;
   }
 
+  function tagLabel(tags) {
+    if (!tags) return "";
+    if (tags.protected) return "🛡 waited longest";
+    if (tags.second_chance) return "↩️ second chance";
+    if (tags.priority) return "⭐ first charge this week";
+    return "";
+  }
+
   function sideView(state) {
     const nodes = [];
     const [first, second] = state.queue;
     nodes.push(el("section", { class: "card kcard" },
       el("div", { class: "label", text: "Up next" }),
       first
-        ? el("div", { class: "who", style: "margin-top:1vh" }, CB.avatar(first.user), el("span", { class: "val", text: first.user.name }))
+        ? el("div", { class: "who", style: "margin-top:1vh" }, CB.avatar(first.user), el("span", { class: "val", text: first.user.name }),
+            tagLabel(first.tags) ? el("span", { class: "label", style: "margin-left:1vw", text: tagLabel(first.tags) }) : null)
         : el("div", { class: "val", style: "margin-top:.5vh", text: "Nobody's waiting" }),
       second ? el("div", { class: "label", style: "margin-top:1.5vh", text: "then " + second.user.name +
+        (tagLabel(second.tags) ? " (" + tagLabel(second.tags) + ")" : "") +
         (state.queue.length > 2 ? ` and ${state.queue.length - 2} more` : "") }) : null));
 
     const qr = el("div", { class: "qr", id: "qr", "aria-hidden": "true" });
@@ -73,7 +83,7 @@
   }
 
   function render(state) {
-    const k = JSON.stringify([state.version, state.kiosk_can_confirm]);
+    const k = JSON.stringify([state.version, state.kiosk_can_confirm, state.queue.map((q) => q.tags)]);
     if (k === lastKey) return;
     lastKey = k;
     if (state.chargers.length === 1) {

@@ -95,6 +95,12 @@ a { color: inherit; }
 .chip.offered { background: var(--pink); color: var(--on-pink); }
 .chip.out_of_order { background: var(--sun); color: #16142B; }
 .chip.waiting { background: var(--card-2); color: var(--muted); }
+.chip.tag { background: var(--card); color: var(--muted); border: 1.5px solid var(--line-soft); font-size: 11px;
+  padding: 2px 8px; text-transform: none; letter-spacing: 0; font-weight: 700; }
+.tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 4px; }
+.why { margin: 6px 4px 2px 40px; line-height: 1.45; }
+.why div + div { margin-top: 3px; }
+.weekcard { padding-top: 14px; padding-bottom: 14px; }
 
 .charger-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; flex-wrap: wrap; }
 .who { display: flex; align-items: center; gap: 12px; margin-top: 12px; min-width: 0; }
