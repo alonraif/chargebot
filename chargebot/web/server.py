@@ -148,6 +148,8 @@ class WebApp:
                 "charge_start": s.charge_start if s else None,
                 "ends_at": s.ends_at if s else None,
                 "capped": bool(s and s.capped),
+                "rush": bool(s and s.rush and not s.rush_checked),
+                "full_ends_at": (s.charge_start + self.cfg.charge_s) if (s and s.rush and s.charge_start) else None,
                 "unplug_user": self.person(c.unplug.user_id, viewer) if c.unplug else None,
             })
         etas = queue_etas(self.cfg, state, now)

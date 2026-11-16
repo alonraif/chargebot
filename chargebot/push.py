@@ -118,6 +118,9 @@ def message(kind: str, data: Dict[str, Any], cfg: Config,
         return note("⌛ You moved down one place",
                     f"You missed your turn. You're now #{data.get('position')} and keep your place in the wait.",
                     "cb-turn", 3600)
+    if kind == "rush_extended":
+        return note("⏱ More time", f"Nobody's waiting, so you've got until {at(data.get('ends_at'))}.",
+                    "cb-session", 600)
     if kind == "warn_end" and data.get("capped"):
         return note("⏳ Rush-hour limit",
                     f"Someone is waiting, so your session ends at {at(data.get('ends_at'))}.", "cb-session", 600,

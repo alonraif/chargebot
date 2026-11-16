@@ -351,3 +351,149 @@ def test_old_snapshot_without_new_fields_loads():
     old = {"chargers": [{"id": "c1", "name": "Charger 1"}], "queue": [{"user_id": "U9", "joined_at": 5.0}], "version": 1}
     state = State.from_dict(old)
     assert state.queue[0].strikes == 0 and not state.queue[0].pushed and state.weekly == {}
+
+
+# -- rush slot: reserve 90, extend to 120 if nobody is waiting 10 minutes before the end -------------
+
+
+def test_rush_charge_reserves_90_minutes_from_the_start():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    s = h.state.chargers[0].session
+    assert s.rush and s.ends_at - s.charge_start == 90 * MIN
+    note = h.notes("A", "charging")[-1]
+    assert note.data["rush"] and note.data["full_ends_at"] == s.charge_start + 120 * MIN
+
+
+def test_rush_slot_extends_to_the_full_slot_when_nobody_is_waiting():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    h.wait(80)
+    s = h.state.chargers[0].session
+    assert s.auto_extended and s.ends_at - s.charge_start == 120 * MIN
+    assert [n.kind for n in h.notes("A", "rush_extended")] == ["rush_extended"]
+    assert not h.notes("A", "warn_end")                          # no "ending soon" at 80 minutes
+    h.wait(30)                                                   # normal warning before the new end
+    assert h.notes("A", "warn_end") and not h.notes("A", "warn_end")[-1].data["capped"]
+    h.wait(11)
+    rec = h.of(LogSession)[0].record
+    assert rec["rush"] and rec["auto_extended"] and not rec["capped"]
+
+
+def test_rush_slot_ends_at_90_when_someone_is_waiting_at_the_check():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    h.wait(60)
+    h.act("join", "B")
+    h.wait(20)                                                   # the check at 80 minutes
+    s = h.state.chargers[0].session
+    assert s.capped and not s.auto_extended and s.ends_at - s.charge_start == 90 * MIN
+    assert h.notes("A", "warn_end")[-1].data["capped"]
+    h.wait(10)
+    assert charging(h) == "B"
+
+
+def test_someone_joining_after_the_extension_does_not_shorten_it():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    h.wait(82)                                                   # extended at 80
+    h.act("join", "B")
+    h.wait(20)
+    assert charging(h) == "A"
+
+
+def test_a_restart_during_the_check_never_cuts_short_an_empty_line():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    h.wait(70)
+    h.clock.advance(25)                                          # the bot was down from 70 to 95 minutes
+    h.engine.tick()
+    s = h.state.chargers[0].session
+    assert s is not None and s.user_id == "A" and s.auto_extended
+
+
+def test_unconfirmed_session_in_rush_hours_gets_the_rush_slot_too():
+    h = make(rush_cap_s=90 * MIN)
+    h.act("join", "A")
+    h.wait(6)                                                    # grace over: clock starts without a confirm
+    s = h.state.chargers[0].session
+    assert s.rush and s.ends_at - s.charge_start == 90 * MIN
+
+
+def test_outside_rush_hours_the_slot_is_the_full_two_hours():
+    h = make(rush_cap_s=90 * MIN)
+    h.clock.now = SUNDAY_14
+    start_charging(h, "A")
+    s = h.state.chargers[0].session
+    assert not s.rush and s.ends_at - s.charge_start == 120 * MIN
+
+
+def test_manual_extension_settles_the_rush_check():
+    h = make(rush_cap_s=90 * MIN)
+    start_charging(h, "A")
+    h.wait(79)
+    h.clock.advance(1)                                           # minute 80, before the scheduler's tick
+    assert h.act("extend", "A").ok                               # tapped Extend the moment it opened
+    s = h.state.chargers[0].session
+    h.wait(1)
+    assert s.rush_checked and not s.auto_extended
+
+
+# -- the rush slot follows registration time, not charge time ----------------------------------------
+
+
+def test_morning_registration_keeps_the_rush_slot_even_when_charging_in_the_afternoon():
+    h = make(rush_cap_s=90 * MIN)
+    h.clock.now = ts(2026, 11, 15, 12, 50)
+    start_charging(h, "X")                                       # X registered 12:50: rush slot
+    h.act("join", "A")                                           # A registered 12:50 too
+    h.clock.now = ts(2026, 11, 15, 14, 10)
+    h.act("done", "X")
+    h.act("confirm", "A")                                        # A starts at 14:10, outside the window
+    s = h.state.chargers[0].session
+    assert s.user_id == "A" and s.rush and s.ends_at - s.charge_start == 90 * MIN
+
+
+def test_afternoon_registration_gets_the_full_slot():
+    h = make(rush_cap_s=90 * MIN)
+    h.clock.now = ts(2026, 11, 15, 13, 5)
+    start_charging(h, "A")
+    s = h.state.chargers[0].session
+    assert not s.rush and s.ends_at - s.charge_start == 120 * MIN
+
+
+def test_registering_before_seven_is_no_loophole():
+    h = make(rush_cap_s=90 * MIN)
+    h.clock.now = ts(2026, 11, 15, 6, 30)
+    start_charging(h, "A")
+    assert h.state.chargers[0].session.rush
+
+
+def test_etas_use_each_persons_registration_time():
+    h = make(rush_cap_s=90 * MIN)
+    h.clock.now = ts(2026, 11, 15, 12, 0)
+    start_charging(h, "X")                                       # rush slot: ends 13:30
+    h.act("join", "A")                                           # registered 12:00: will get 90
+    h.clock.now = ts(2026, 11, 15, 13, 10)
+    h.act("join", "B")                                           # registered 13:10: will get 120
+    h.clock.now = ts(2026, 11, 15, 13, 11)
+    h.act("join", "C")
+    etas = queue_etas(h.cfg, h.state, h.clock.now)
+    end_x = ts(2026, 11, 15, 13, 30)
+    assert etas[0] == end_x
+    assert etas[1] == end_x + h.cfg.grace_s + 90 * MIN          # A's rush slot
+    assert etas[2] == etas[1] + h.cfg.grace_s + 120 * MIN        # B's full slot
+
+
+def test_a_pushed_down_person_keeps_their_morning_registration():
+    h = make(rush_cap_s=90 * MIN, noshow_pushdown=True)
+    start_charging(h, "X")
+    h.act("join", "A")
+    h.wait(1)
+    h.act("join", "B")
+    h.clock.now = ts(2026, 11, 15, 13, 30)
+    h.act("done", "X")
+    h.wait(10)                                                   # A misses; B charges; A is back in line
+    finish(h)
+    h.act("confirm", "A")
+    assert h.state.chargers[0].session.rush                       # still the 08:00 registration

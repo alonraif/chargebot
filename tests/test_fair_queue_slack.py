@@ -12,7 +12,7 @@ from chargebot.domain import week_start
 from chargebot.slack import blocks as B
 
 from .conftest import Harness
-from .test_fair_queue import SUNDAY_8, charging, make, set_week, start_charging
+from .test_fair_queue import SUNDAY_8, SUNDAY_14, charging, make, set_week, start_charging
 
 
 def names(uid):
@@ -158,7 +158,7 @@ def test_capped_warning_names_the_rush_hour_limit():
     text, blocks = B.notification("warn_end", {"ends_at": 1.7e9, "capped": True, "can_extend": False},
                                   h.cfg, h.state, names)
     out = text_of(blocks)
-    assert "Rush-hour limit" in text and "07:00" in out and "13:00" in out and "90 min" in out
+    assert "Rush-hour limit" in text and "90 min rush-hour slot ends" in out
     assert "Extend" not in out
 
 
@@ -174,14 +174,12 @@ def test_time_up_mentions_the_limit_when_capped():
     assert "rush-hour limit" in text_of(blocks)
 
 
-def test_offered_notification_mentions_rush_rule_only_inside_rush_hours(monkeypatch):
+def test_offered_notification_mentions_the_rush_rule_only_for_morning_registrations():
     h = make(rush_cap_s=90 * 60)
-    data = {"confirm_deadline": 1.7e9, "grace_ends_at": 1.7e9}
-    monkeypatch.setattr(B.time, "time", lambda: SUNDAY_8)
-    _, inside = B.notification("offered", data, h.cfg, h.state, names)
-    monkeypatch.setattr(B.time, "time", lambda: SUNDAY_8 + 8 * 3600)      # 16:00
-    _, outside = B.notification("offered", data, h.cfg, h.state, names)
-    assert "Rush hours" in text_of(inside) and "Rush hours" not in text_of(outside)
+    base = {"confirm_deadline": 1.7e9, "grace_ends_at": 1.7e9}
+    _, morning = B.notification("offered", dict(base, joined_at=SUNDAY_8, rush=True), h.cfg, h.state, names)
+    _, afternoon = B.notification("offered", dict(base, joined_at=SUNDAY_14, rush=False), h.cfg, h.state, names)
+    assert "Rush hours" in text_of(morning) and "Rush hours" not in text_of(afternoon)
 
 
 # -- help, admin, push ------------------------------------------------------------------------------
@@ -210,3 +208,47 @@ def test_push_messages_for_the_new_notifications():
     plain = push.message("warn_end", {"ends_at": SUNDAY_8, "can_extend": True}, cfg, names)
     assert "#2" in down["body"] and "one more chance" in again["body"]
     assert capped["title"] == "⏳ Rush-hour limit" and plain["title"] == "⏳ 10 minutes left"
+
+
+def test_charging_message_explains_the_rush_slot_and_auto_extension():
+    h = make(rush_cap_s=90 * 60)
+    data = {"ends_at": SUNDAY_8 + 90 * 60, "rush": True, "full_ends_at": SUNDAY_8 + 120 * 60}
+    _, blocks = B.notification("charging", data, h.cfg, h.state, names)
+    assert "Rush-hour slot" in text_of(blocks) and "extend you to" in text_of(blocks)
+    _, plain = B.notification("charging", {"ends_at": SUNDAY_8 + 7200}, h.cfg, h.state, names)
+    assert "Rush-hour slot" not in text_of(plain)
+
+
+def test_rush_extended_notification_renders():
+    h = make(rush_cap_s=90 * 60)
+    text, blocks = B.notification("rush_extended", {"ends_at": SUNDAY_8 + 7200}, h.cfg, h.state, names)
+    assert "Nobody's waiting" in text and blocks
+    msg = push.message("rush_extended", {"ends_at": SUNDAY_8 + 7200}, h.cfg, names)
+    assert "Nobody's waiting" in msg["body"]
+
+
+def test_offered_message_shows_the_clock_that_matches_registration_time():
+    h = make(rush_cap_s=90 * 60)
+    base = {"confirm_deadline": 1.7e9, "grace_ends_at": 1.7e9}
+    _, morning = B.notification("offered", dict(base, joined_at=SUNDAY_8, rush=True), h.cfg, h.state, names)
+    assert "Your 90 min clock" in text_of(morning) and "extended to 2 hours automatically" in text_of(morning)
+    assert "register before 13:00" in text_of(morning)
+    _, afternoon = B.notification("offered", dict(base, joined_at=SUNDAY_14), h.cfg, h.state, names)
+    assert "Your 2 hours clock" in text_of(afternoon)
+
+
+def test_join_reply_tells_morning_registrations_about_the_90_minute_slot():
+    h = make(rush_cap_s=90 * 60)
+    start_charging(h, "X")
+    r = h.act("join", "A")
+    assert "You registered before 13:00, so your charge will be 90 min" in B.reply(r.code, r.data, h.cfg, h.state, names)
+    h2 = make(rush_cap_s=90 * 60)
+    h2.clock.now = SUNDAY_14
+    start_charging(h2, "X")
+    r2 = h2.act("join", "A")
+    assert "You registered" not in B.reply(r2.code, r2.data, h2.cfg, h2.state, names)
+
+
+def test_help_explains_registration_based_rush_rule():
+    text = B.help_text(Config(web_secret="t", rush_cap_s=90 * 60))
+    assert "register before 13:00" in text and "Register after 13:00 for the full 2 hours" in text

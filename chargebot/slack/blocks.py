@@ -7,7 +7,8 @@ from collections import Counter
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from ..config import Config
-from ..domain import State, can_extend, charger_phase, in_rush, queue_entry_info, queue_etas, queue_info, week_count
+from ..domain import (State, can_extend, charge_len_s, charger_phase, queue_entry_info, queue_etas,
+                      queue_info, week_count)
 from ..stats import user_stats
 
 Names = Callable[[Optional[str]], str]
@@ -220,13 +221,12 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
         blocks = compact([
             section(f"*🔌 Your turn! The charger is yours{on}.*\n"
                     f"Plug in and tap *I'm plugged in* by {when(data['confirm_deadline'])} to keep your turn. "
-                    f"Your {duration(cfg.charge_s)} clock starts when you confirm, "
+                    f"Your {duration(charge_len_s(cfg, data.get('joined_at') or time.time()))} clock starts "
+                    "when you confirm, "
                     f"or at {when(data['grace_ends_at'])} at the latest."),
             context(f"🚗 {names(prev)}'s session just ended. If their car's still plugged in, tap *Nudge*.")
             if prev else None,
-            context(f"🕖 Rush hours ({cfg.rush_start_hour:02d}:00–{cfg.rush_end_hour:02d}:00): if someone is "
-                    f"waiting, charges end after {duration(cfg.rush_cap_s)}.")
-            if cfg.rush_cap_s and in_rush(cfg, time.time()) else None,
+            context(rush_rule_text(cfg)) if data.get("rush") else None,
             actions(confirm_btn, skip_btn, button("🔔 Nudge", A_NUDGE) if prev else None, dashboard_button(link)),
         ])
         return text, blocks
@@ -282,18 +282,29 @@ def notification(kind: str, data: Dict[str, Any], cfg: Config, state: Optional[S
         text = f"⚡ You're charging{on}. Done at {when(data['ends_at'])}."
         return text, compact([
             section(f"*⚡ You're charging{on}.* Done at {when(data['ends_at'])}."),
+            context(f"🕖 Rush-hour slot (you registered {rush_window_text(cfg)}). If nobody's waiting at "
+                    f"{when(data['ends_at'] - cfg.warn_before_end_s)}, "
+                    f"I'll extend you to {when(data.get('full_ends_at'))} automatically.")
+            if data.get("rush") and data.get("full_ends_at") else None,
             context(f"I'll remind you {duration(cfg.warn_before_end_s)} before the end."
                     + (" A calendar reminder is on its way to your inbox." if cfg.gmail_ready
                        and state and state.wants_email(data.get('user_id', '')) else "")),
             actions(done_btn, dashboard_button(link)),
         ])
 
+    if kind == "rush_extended":
+        text = f"⏱ Nobody's waiting, so you've got until {when(data['ends_at'])}."
+        return text, compact([
+            section(f"*⏱ Nobody's waiting{on},* so your rush-hour slot was extended. "
+                    f"You've got until {when(data['ends_at'])}."),
+            actions(done_btn, dashboard_button(link)),
+        ])
+
     if kind == "warn_end" and data.get("capped"):
         text = f"⏳ Rush-hour limit: your session ends at {when(data['ends_at'])}."
         return text, compact([
-            section(f"*⏳ Rush-hour limit{on}.* Someone is waiting, so charges that start between "
-                    f"{cfg.rush_start_hour:02d}:00 and {cfg.rush_end_hour:02d}:00 end after "
-                    f"{duration(cfg.rush_cap_s)}. Your session ends at {when(data['ends_at'])}."),
+            section(f"*⏳ Rush-hour limit{on}.* Someone is waiting, so your {duration(cfg.rush_cap_s)} "
+                    f"rush-hour slot ends at {when(data['ends_at'])}."),
             actions(done_btn),
         ])
 
@@ -375,9 +386,9 @@ def reply(code: str, data: Dict[str, Any], cfg: Config, state: Optional[State], 
     eta_text = when(eta, "{date_short_pretty} at {time}") if eta else "as soon as the charger frees up"
     texts = {
         "offered": f"🔌 The charger is yours{on}. Plug in and confirm by {when(data.get('confirm_deadline'))}. "
-                   "Your buttons are in our DM.",
+                   "Your buttons are in our DM." + _rush_suffix(cfg, data),
         "queued": f"📋 You're *#{data.get('position')}* in line. Estimated turn: {eta_text}. "
-                  "I'll DM you when it's yours." + _why_suffix(cfg, data),
+                  "I'll DM you when it's yours." + _why_suffix(cfg, data) + _rush_suffix(cfg, data),
         "already_active": (f"⚡ You're already charging{on}." if data.get("confirmed")
                            else f"🔌 The charger is already reserved for you{on}. Confirm in our DM."),
         "already_queued": f"📋 You're already *#{data.get('position')}* in line. Estimated turn: {eta_text}."
@@ -459,14 +470,34 @@ HELP = (
 )
 
 
+def rush_window_text(cfg: Config) -> str:
+    if cfg.rush_start_hour <= 0:
+        return f"before {cfg.rush_end_hour:02d}:00"
+    return f"between {cfg.rush_start_hour:02d}:00 and {cfg.rush_end_hour:02d}:00"
+
+
+def rush_rule_text(cfg: Config, bold: bool = False) -> str:
+    label = "*Rush hours*" if bold else "🕖 Rush hours"
+    return (f"{label}: register {rush_window_text(cfg)} and your charge is {duration(cfg.rush_cap_s)}. "
+            f"If nobody's waiting {duration(cfg.warn_before_end_s)} before the end, it's extended to "
+            f"{duration(cfg.charge_s)} automatically. Register after {cfg.rush_end_hour:02d}:00 for the full "
+            f"{duration(cfg.charge_s)}.")
+
+
+def _rush_suffix(cfg: Config, data: Dict[str, Any]) -> str:
+    if not data.get("rush"):
+        return ""
+    return (f"\n🕖 You registered {rush_window_text(cfg)}, so your charge will be {duration(cfg.rush_cap_s)}, "
+            f"or {duration(cfg.charge_s)} if nobody's waiting near the end.")
+
+
 def fair_help(cfg: Config) -> str:
     lines = []
     if cfg.priority_queue:
         lines.append("• *Fair line:* people who've charged less this week go first (the count starts fresh every Saturday night). "
                      f"Wait {mins(cfg.nojump_s)} min and nobody can jump ahead of you.")
     if cfg.rush_cap_s:
-        lines.append(f"• *Rush hours* ({cfg.rush_start_hour:02d}:00–{cfg.rush_end_hour:02d}:00): if someone is "
-                     f"waiting, charges end after {duration(cfg.rush_cap_s)}. If nobody is, keep going.")
+        lines.append("• " + rush_rule_text(cfg, bold=True))
     if cfg.noshow_pushdown:
         lines.append("• *Missed your turn?* You move down one place instead of leaving the queue. Miss twice and "
                      "you leave it.")

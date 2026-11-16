@@ -92,7 +92,7 @@ def main() -> int:
         return datetime.fromtimestamp(t, tz).isoformat(timespec="seconds") if t else ""
 
     cols = ["session_id", "user_id", "user_name", "charger_id", *TIME_FIELDS, "extensions", "outcome",
-            "wait_min", "charge_min", "total_min", "capped", "strikes", "week_charges_before"]
+            "wait_min", "charge_min", "total_min", "capped", "strikes", "week_charges_before", "rush", "auto_extended"]
     with open(args.out, "w", newline="", encoding="utf-8-sig") as f:  # BOM so Excel reads UTF-8
         w = csv.writer(f)
         w.writerow(cols)
@@ -105,6 +105,7 @@ def main() -> int:
                 round((e - s) / 60, 1) if s and e and e >= s else "",
                 round((e - j) / 60, 1) if j and e and e >= j else "",
                 r.get("capped", ""), r.get("strikes", ""), r.get("week_charges_before", ""),  # blank on old records
+                r.get("rush", ""), r.get("auto_extended", ""),
             ])
     print(f"Wrote {len(records)} sessions to {args.out}")
     return 0

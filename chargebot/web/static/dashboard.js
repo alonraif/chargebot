@@ -197,6 +197,11 @@
     return lines;
   }
 
+  function rushWindow(r) {
+    const pad = (h) => String(h).padStart(2, "0") + ":00";
+    return r.rush_start > 0 ? "between " + pad(r.rush_start) + " and " + pad(r.rush_end) : "before " + pad(r.rush_end);
+  }
+
   function weekCard(state) {
     const w = state.me && state.me.week;
     if (!w || !state.rules.priority) return null;
@@ -240,6 +245,10 @@
       if (c.capped) {
         card.append(el("p", { class: "muted small", style: "margin:12px 0 0",
           text: "⏳ Rush-hour limit: someone is waiting, so this session ends at " + CB.clock(c.ends_at) + "." }));
+      } else if (c.rush && c.full_ends_at) {
+        card.append(el("p", { class: "muted small", style: "margin:12px 0 0",
+          text: "🕖 Rush-hour slot (registered " + rushWindow(state.rules) + "). If nobody's waiting 10 minutes " +
+            "before the end, it's extended to " + CB.clock(c.full_ends_at) + " automatically." }));
       }
     } else if (c.phase === "offered") {
       card.append(
@@ -307,7 +316,7 @@
   }
 
   function render(state) {
-    const key = JSON.stringify([state.version, state.me, state.chargers.map((c) => [c.phase, c.capped]),
+    const key = JSON.stringify([state.version, state.me, state.chargers.map((c) => [c.phase, c.capped, c.rush]),
       state.queue.map((q) => [q.position, q.tags])]);
     if (key === lastKey) return;
     lastKey = key;

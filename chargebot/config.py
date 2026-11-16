@@ -52,10 +52,12 @@ class Config:
     nojump_s: int = 90 * 60
     # A missed turn moves the person down one place instead of dropping them (once).
     noshow_pushdown: bool = False
-    # Soft cap: during the rush window a charge is cut to this length, but only when
-    # someone is waiting as it approaches. 0 turns the cap off.
+    # Rush slot: someone who registers (joins the line) in the rush window gets this length,
+    # whenever their charge starts. If nobody is waiting shortly before it ends, it's extended
+    # to the full charge length. 0 turns it off. The window is by registration time on purpose:
+    # it discourages registering early to hold a place.
     rush_cap_s: int = 0
-    rush_start_hour: int = 7
+    rush_start_hour: int = 0   # 0 = any registration before rush_end_hour counts
     rush_end_hour: int = 13
 
     # Slack channels and people.
@@ -132,7 +134,7 @@ class Config:
             nojump_s=_minutes(env, "NOJUMP_MIN", 90),
             noshow_pushdown=_flag(env, "NOSHOW_PUSHDOWN"),
             rush_cap_s=_minutes(env, "RUSH_CAP_MIN", 0),
-            rush_start_hour=int(env.get("RUSH_START_HOUR") or 7),
+            rush_start_hour=int(env.get("RUSH_START_HOUR") or 0),
             rush_end_hour=int(env.get("RUSH_END_HOUR") or 13),
             state_channel_id=env.get("STATE_CHANNEL_ID") or None,
             status_channel_id=env.get("STATUS_CHANNEL_ID") or None,

@@ -52,7 +52,7 @@ def test_rules_are_published_for_the_pages(fair):
     h, base = fair
     r = state(base)["rules"]
     assert r == {"priority": True, "pushdown": True, "nojump_s": 90 * MIN, "rush_cap_s": 90 * MIN,
-                 "rush_start": 7, "rush_end": 13, "charge_s": 120 * MIN}
+                 "rush_start": 0, "rush_end": 13, "charge_s": 120 * MIN}
 
 
 def test_queue_is_in_offer_order_with_public_tags_only(fair):
@@ -119,9 +119,18 @@ def test_a_missed_turn_shows_a_second_chance_tag(fair):
 def test_static_pages_are_cache_busted_and_the_guide_has_the_new_section():
     for page in ("index.html", "kiosk.html", "guide.html", "stats.html"):
         text = (STATIC / page).read_text()
-        assert "?v=10" not in text, page
-    assert "juice-v11" in (STATIC / "sw.js").read_text()
+        assert "?v=10" not in text and "?v=11" not in text, page
+    assert "juice-v12" in (STATIC / "sw.js").read_text()
     guide = (STATIC / "guide.html").read_text()
     assert 'id="fair"' in guide and "hidden" in re.search(r'<section[^>]*id="fair"[^>]*>', guide).group(0)
     for rule in ("priority", "pushdown", "rush"):
         assert f'data-rule="{rule}"' in guide
+
+
+def test_charging_card_knows_about_the_rush_slot(fair):
+    h, base = fair
+    c = state(base)["chargers"][0]
+    assert c["rush"] is True and c["full_ends_at"] == h.state.chargers[0].session.charge_start + 120 * MIN
+    h.wait(85)                                                   # checked at 80 with people waiting
+    c = state(base)["chargers"][0]
+    assert c["rush"] is False and c["capped"] is True

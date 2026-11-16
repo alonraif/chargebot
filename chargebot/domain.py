@@ -18,8 +18,6 @@ from .stats import _tz
 
 # Outcomes that count as "a charge this week" (and only when the session was confirmed).
 COUNTED_OUTCOMES = ("completed", "ended_early")
-# A rush-hour cap is only applied if there are at least this many seconds left to warn the user.
-CAP_MIN_NOTICE_S = 3 * 60
 
 
 def _known(cls: Any, data: Dict[str, Any]) -> Dict[str, Any]:
@@ -103,8 +101,10 @@ class Session:
     invite_seq: int = 0
     messages: List[Dict[str, str]] = field(default_factory=list)
     strikes: int = 0                      # missed turns in this wait (carried from the queue entry)
-    capped: bool = False                  # cut short by the rush-hour cap
-    uncapped_ends_at: Optional[float] = None
+    rush: bool = False                    # started in rush hours, so it got the shorter rush slot
+    rush_checked: bool = False            # the "anyone waiting?" check near the end has been made
+    capped: bool = False                  # someone was waiting, so it ends at the rush limit
+    auto_extended: bool = False           # nobody was waiting, so it was extended to the full slot
 
     @property
     def confirmed(self) -> bool:
@@ -270,22 +270,31 @@ def tier_of(count: int) -> int:
 
 
 def in_rush(cfg: Config, ts: float) -> bool:
-    """Is this moment inside the rush window? Only matters when the cap is on."""
+    """Is this moment inside the rush window (local time)? Only matters when the rush slot is on."""
     if not cfg.rush_cap_s:
         return False
     hour = datetime.fromtimestamp(ts, _tz(cfg.timezone)).hour
     return cfg.rush_start_hour <= hour < cfg.rush_end_hour
 
 
-def charge_len_s(cfg: Config, start: float, others_waiting: bool) -> int:
-    """Planned charge length for a session starting at ``start``."""
-    if others_waiting and in_rush(cfg, start):
-        return min(cfg.charge_s, cfg.rush_cap_s)
-    return cfg.charge_s
+def is_rush_slot(cfg: Config, joined_at: float) -> bool:
+    """Does someone who registered at ``joined_at`` get the shorter rush slot?
+
+    Decided by registration time, not charge time, so registering early to hold a place
+    costs charge time when others are waiting.
+    """
+    return in_rush(cfg, joined_at) and cfg.rush_cap_s < cfg.charge_s
 
 
-def charger_free_at(cfg: Config, charger: Charger, now: float,
-                    queue_waiting: bool = False) -> Optional[float]:
+def charge_len_s(cfg: Config, joined_at: float) -> int:
+    """Reserved charge length for someone who registered at ``joined_at``.
+
+    A rush slot is extended to the full slot near its end if nobody is waiting (see Rules._rush_check).
+    """
+    return cfg.rush_cap_s if is_rush_slot(cfg, joined_at) else cfg.charge_s
+
+
+def charger_free_at(cfg: Config, charger: Charger, now: float) -> Optional[float]:
     """Best guess of when a charger can be offered to someone new."""
     if charger.out_of_order:
         return None
@@ -293,24 +302,21 @@ def charger_free_at(cfg: Config, charger: Charger, now: float,
     if s is None:
         return now
     start = s.charge_start if s.charge_start is not None else s.grace_ends_at
-    end = s.ends_at if s.ends_at is not None else start + cfg.charge_s
-    if queue_waiting and in_rush(cfg, start):
-        end = min(end, start + cfg.rush_cap_s)
+    end = s.ends_at if s.ends_at is not None else start + charge_len_s(cfg, s.joined_at)
     return max(now, end)
 
 
 def queue_etas(cfg: Config, state: State, now: float) -> List[Optional[float]]:
     """Estimated offer time for each queue entry, in queue order."""
-    waiting = bool(state.queue)
-    free = [t for t in (charger_free_at(cfg, c, now, waiting) for c in state.chargers) if t is not None]
+    free = [t for t in (charger_free_at(cfg, c, now) for c in state.chargers) if t is not None]
     if not free:
         return [None] * len(state.queue)
     etas: List[Optional[float]] = []
-    for _ in state.queue:
+    for entry in state.queue:
         i = min(range(len(free)), key=lambda k: free[k])
         etas.append(free[i])
-        # Everyone ahead of a queued person has someone waiting behind them, so the cap applies.
-        free[i] = free[i] + cfg.grace_s + charge_len_s(cfg, free[i] + cfg.grace_s, True)
+        # Everyone ahead of a queued person has someone waiting behind them, so a rush slot isn't extended.
+        free[i] = free[i] + cfg.grace_s + charge_len_s(cfg, entry.joined_at)
     return etas
 
 
@@ -461,6 +467,8 @@ class Rules:
             "grace_ends_at": session.grace_ends_at,
             "confirm_deadline": session.confirm_deadline,
             "previous_user_id": charger.unplug.user_id if charger.unplug else None,
+            "joined_at": session.joined_at,
+            "rush": is_rush_slot(self.cfg, session.joined_at),
         }, track=session.id))
         result.changed = True
         return session
@@ -489,6 +497,8 @@ class Rules:
             "extensions": session.extensions,
             "outcome": outcome,
             "capped": session.capped,
+            "rush": session.rush,
+            "auto_extended": session.auto_extended,
             "strikes": session.strikes,
             "week_charges_before": week_count(self.cfg, state, session.user_id, now),
         }))
@@ -513,8 +523,7 @@ class Rules:
                         now: float, result: Result) -> None:
         session.confirmed_at = now
         if session.charge_start is None:
-            session.charge_start = now
-            session.ends_at = now + self.cfg.charge_s
+            self._set_clock(session, now)
         session.alerts_sent = len(self.cfg.confirm_alerts_s)
         if charger.unplug is not None:
             self._close(result, charger.unplug, "handed_over")
@@ -528,35 +537,46 @@ class Rules:
         result.effects.append(Notify(session.user_id, "charging", {
             "charger_id": charger.id,
             "ends_at": session.ends_at,
+            "rush": session.rush,
+            "full_ends_at": (session.charge_start + self.cfg.charge_s) if session.rush else None,
         }, track=session.id))
         result.changed = True
 
-    def _maybe_cap(self, state: State, s: Session, now: float, result: Result) -> None:
-        """Rush-hour soft cap: shorten a charge to the cap length, but only if someone is waiting.
+    def _set_clock(self, session: Session, start: float) -> None:
+        """Start the charging clock. In rush hours the session reserves the shorter rush slot."""
+        session.charge_start = start
+        session.rush = is_rush_slot(self.cfg, session.joined_at)
+        session.ends_at = start + charge_len_s(self.cfg, session.joined_at)
 
-        The decision is made once, shortly before the cap time, so the user always gets a
-        warning first. If nobody is waiting then, the charge simply runs its full length.
+    def _rush_check(self, state: State, s: Session, now: float, result: Result) -> None:
+        """Near the end of a rush slot, look at the line once.
+
+        Someone waiting: the session ends at the rush limit (the usual warning says why).
+        Nobody waiting: it's extended to the full slot automatically. This also runs if the
+        bot was down at that moment, so a restart never cuts anyone short with an empty line.
         """
         cfg = self.cfg
-        if not cfg.rush_cap_s or s.capped or s.charge_start is None or s.ends_at is None or not state.queue:
+        if not s.rush or s.rush_checked or s.ends_at is None or s.charge_start is None:
             return
-        if not in_rush(cfg, s.charge_start):
+        if now < s.ends_at - cfg.warn_before_end_s:
             return
-        target = s.charge_start + cfg.rush_cap_s
-        if s.ends_at <= target:
+        s.rush_checked = True
+        result.changed = True
+        if state.queue:
+            s.capped = True
             return
-        notice = max(cfg.warn_before_end_s, CAP_MIN_NOTICE_S)
-        if not (target - notice <= now <= target - CAP_MIN_NOTICE_S):
+        full = s.charge_start + cfg.charge_s
+        if full <= s.ends_at:
             return
-        s.uncapped_ends_at = s.ends_at
-        s.ends_at = target
-        s.capped = True
-        s.warned = False  # so the usual "ending soon" warning goes out, now with the reason
+        s.ends_at = full
+        s.auto_extended = True
+        s.warned = False
         if s.invite_uid:
             s.invite_seq += 1
             result.effects.append(SendInvite(
                 s.user_id, s.invite_uid, s.ends_at, s.ends_at + cfg.grace_s, s.invite_seq))
-        result.changed = True
+        result.effects.append(Notify(s.user_id, "rush_extended", {
+            "charger_id": s.charger_id, "ends_at": s.ends_at}, track=s.id))
 
     def _eta_for(self, state: State, user_id: str, now: float) -> Optional[float]:
         pos = state.queue_position(user_id)
@@ -580,7 +600,8 @@ class Rules:
         if free and not state.queue:
             charger = next((c for c in free if c.reclaim is None), free[0])
             self._offer(state, charger, user_id, now, now, result)
-            result.data = {"charger_id": charger.id, "confirm_deadline": charger.session.confirm_deadline}
+            result.data = {"charger_id": charger.id, "confirm_deadline": charger.session.confirm_deadline,
+                           "rush": is_rush_slot(self.cfg, now)}
             return self._done(result)
 
         entry = QueueEntry(user_id=user_id, joined_at=now)
@@ -591,7 +612,8 @@ class Rules:
             entry.heads_up_sent = True
         result.code = "queued"
         result.data = {"position": state.queue_position(user_id) + 1, "eta": eta,
-                       "why": queue_entry_info(self.cfg, state, user_id, now)}
+                       "why": queue_entry_info(self.cfg, state, user_id, now),
+                       "rush": is_rush_slot(self.cfg, now)}
         result.changed = True
         return self._done(result)
 
@@ -662,6 +684,7 @@ class Rules:
         result = Result(code="extended")
         session.ends_at = (session.ends_at or now) + self.cfg.extend_s
         session.extensions += 1
+        session.rush_checked = True  # a manual extension settles the rush-hour check too
         session.warned = False
         self._close(result, session, "extended", ends_at=session.ends_at)
         if session.invite_uid:
@@ -786,8 +809,7 @@ class Rules:
             s = charger.session
             if s is not None and not s.confirmed:
                 if s.charge_start is None and now >= s.grace_ends_at:
-                    s.charge_start = s.grace_ends_at
-                    s.ends_at = s.charge_start + cfg.charge_s
+                    self._set_clock(s, s.grace_ends_at)
                     result.changed = True
 
                 if now >= s.confirm_deadline and cfg.noshow_pushdown and s.strikes == 0:
@@ -832,7 +854,7 @@ class Rules:
                     result.changed = True
 
             elif s is not None and s.ends_at is not None:
-                self._maybe_cap(state, s, now, result)
+                self._rush_check(state, s, now, result)
                 if now >= s.ends_at:
                     next_user = state.queue[0].user_id if state.queue else None
                     self._end(state, charger, now, "completed", result, close_reason="completed")
